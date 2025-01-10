@@ -22,3 +22,17 @@ def rank_candidates(candidates: List[Dict[str, Any]], user_id: str) -> List[Dict
     score_dict = dict(scores)
     ranked_candidates = sorted(candidates, key=lambda x: score_dict.get(x['id'], 0), reverse=True)
     return ranked_candidates
+
+def batch_rank_candidates(candidates_list: List[List[Dict[str, Any]]], user_ids: List[str]) -> List[List[Dict[str, Any]]]:
+    """
+    여러 사용자에 대해 배치로 순위화 수행.
+    :param candidates_list: 각 사용자별 후보 리스트의 리스트
+    :param user_ids: 사용자 ID 리스트
+    :return: 사용자별로 순위화된 후보 리스트의 리스트
+    """
+    results = []
+    for candidates, user_id in zip(candidates_list, user_ids):
+        ranked = rank_candidates(candidates, user_id)
+        results.append(ranked)
+    return results
+

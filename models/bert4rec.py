@@ -5,7 +5,7 @@ from typing import Any, List
 from models.base_model import BaseModel
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, embedding_dim: int = 64, num_heads: int = 4, num_layers: int = 2, max_seq_length: int = 50):
+    def __init__(self, embedding_dim: int = 64, num_heads: int = 4, num_layers: int = 4, max_seq_length: int = 50):
         super(TransformerEncoder, self).__init__()
         self.embedding_dim = embedding_dim
         self.position_embedding = nn.Embedding(max_seq_length, embedding_dim)
