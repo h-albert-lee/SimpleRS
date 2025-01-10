@@ -1,7 +1,7 @@
 import logging
 from batch.utils.db_manager import DBManager
 from batch.utils.logging_setup import setup_logging
-from batch.rules import generate_global_candidates, generate_local_candidates_with_cf
+from batch.rules import generate_global_candidates, generate_local_candidates
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ def candidate_generation():
     try:
         user_ids = db.get_all_user_ids()
         for user_id in user_ids:
-            local_candidates = generate_local_candidates_with_cf(db, user_id)
+            local_candidates = generate_local_candidates(db, user_id)
             db.store_local_candidates(user_id, local_candidates)
             logger.info(f"Stored {len(local_candidates)} local candidates for user {user_id}.")
     except Exception as e:
