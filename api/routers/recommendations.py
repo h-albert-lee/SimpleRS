@@ -1,13 +1,20 @@
+# api/routers/recommendations.py
 from fastapi import APIRouter, HTTPException
-from api.services.candidate_fetcher import fetch_candidates
-from api.services.ranking import rank_candidates
+from api.batch_processor import request_queue
+import asyncio
 
 router = APIRouter()
 
 @router.get("/")
-def get_recommendations(user_id: str):
-    candidates = fetch_candidates(user_id)
-    if not candidates:
-        raise HTTPException(status_code=404, detail="No candidates found.")
-    ranked_candidates = rank_candidates(candidates, user_id)
-    return {"user_id": user_id, "recommendations": ranked_candidates}
+async def get_recommendations(user_id: str):
+    loop = asyncio.get_running_loop()
+    response_future = loop.create_future()
+    
+    # 요청 큐에 추가
+    await request_queue.put((user_id, response_future))
+    
+    try:
+        result = await response_future  # 배치 처리 완료 대기
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
