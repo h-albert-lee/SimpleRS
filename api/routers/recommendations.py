@@ -6,11 +6,8 @@ router = APIRouter()
 
 @router.get("/")
 def get_recommendations(user_id: str):
-    # 후보 콘텐츠 가져오기
     candidates = fetch_candidates(user_id)
     if not candidates:
         raise HTTPException(status_code=404, detail="No candidates found.")
-    
-    # 순위화
-    ranked_candidates = rank_candidates(candidates)
+    ranked_candidates = rank_candidates(candidates, user_id)
     return {"user_id": user_id, "recommendations": ranked_candidates}
