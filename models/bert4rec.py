@@ -36,9 +36,10 @@ class TransformerEncoder(nn.Module):
 class BERT4RecModel(BaseModel):
     def __init__(self, embedding_dim: int = 64, num_heads: int = 4, num_layers: int = 2, max_seq_length: int = 50):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.max_seq_length = max_seq_length  # 최대 시퀀스 길이 저장
         self.model = TransformerEncoder(embedding_dim, num_heads, num_layers, max_seq_length).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
-        self.criterion = nn.MSELoss()  # 임베딩 예측을 위한 MSE 손실 사용
+        self.criterion = nn.MSELoss()
 
     def train(self, data: Any) -> None:
         """
@@ -50,17 +51,20 @@ class BERT4RecModel(BaseModel):
         for epoch in range(epochs):
             total_loss = 0.0
             for user_id, sequence in data.items():
-                # 시퀀스를 텐서로 변환하고 배치 차원 추가
-                seq_tensor = torch.tensor(sequence, dtype=torch.float, device=self.device).unsqueeze(0)  # shape: (1, T, embedding_dim)
-                
+                # 시퀀스를 텐서로 변환
+                seq_tensor = torch.tensor(sequence, dtype=torch.float, device=self.device)  # shape: (T, embedding_dim)
+                # 왼쪽 패딩 적용하여 고정 길이로 맞춤
+                padded_seq = pad_sequence_left(seq_tensor, self.max_seq_length)  # shape: (max_seq_length, embedding_dim)
+                # 배치 차원 추가: (1, max_seq_length, embedding_dim)
+                padded_seq = padded_seq.unsqueeze(0)
+
                 # 예측 목표: 시퀀스의 마지막 아이템(embedding)
-                target = seq_tensor[:, -1, :]  # shape: (1, embedding_dim)
-                
+                target = padded_seq[:, -1, :]  # shape: (1, embedding_dim)
                 # 입력 시퀀스: 마지막 아이템을 제외한 시퀀스
-                input_seq = seq_tensor[:, :-1, :]  # shape: (1, T-1, embedding_dim)
+                input_seq = padded_seq[:, :-1, :]  # shape: (1, max_seq_length-1, embedding_dim)
                 
                 self.optimizer.zero_grad()
-                output = self.model(input_seq)  # shape: (1, embedding_dim)
+                output = self.model(input_seq)  
                 loss = self.criterion(output, target)
                 loss.backward()
                 self.optimizer.step()
@@ -68,29 +72,72 @@ class BERT4RecModel(BaseModel):
                 total_loss += loss.item()
             print(f"Epoch {epoch+1}, Loss: {total_loss}")
 
-    def predict(self, user_id: str, candidate_embeddings: List[np.ndarray]) -> List[Any]:
+    def predict(self, user_id: str, candidate_embeddings: List[np.ndarray]) -> List[float]:
         """
-        사용자에 대한 추천 점수를 예측.
+        주어진 user_id에 대해 후보 콘텐츠 임베딩들의 유사도를 예측하여 점수 리스트 반환.
         candidate_embeddings: 추천 후보 콘텐츠들의 임베딩 리스트
         """
         self.model.eval()
-        # 더미 시퀀스를 사용하여 다음 임베딩 예측
-        # 실제 서비스에서는 사용자의 최근 시퀀스를 활용해야 함
-        dummy_seq = torch.zeros((1, 50, self.model.embedding_dim), device=self.device)  # 임의의 시퀀스
-        with torch.no_grad():
-            predicted_embedding = self.model(dummy_seq)  # shape: (1, embedding_dim)
         
-        # 예측 임베딩과 각 후보 임베딩 간의 유사도 계산
+        # 1. 사용자 최근 시퀀스 가져오기 (프로덕션용으로 실제 구현 필요)
+        # 이 부분은 실제 사용자 행동 데이터를 조회하는 로직으로 교체해야 합니다.
+        user_sequence_embeddings = self.retrieve_user_sequence(user_id)
+        
+        # 2. 사용자 시퀀스를 텐서로 변환 및 왼쪽 패딩 적용
+        if user_sequence_embeddings:
+            seq_tensor = torch.tensor(user_sequence_embeddings, dtype=torch.float, device=self.device)
+        else:
+            # 사용자의 이력이 없으면, 임베딩 벡터를 0으로 채움
+            seq_tensor = torch.zeros((1, self.model.embedding_dim), dtype=torch.float, device=self.device)
+        
+        padded_seq = pad_sequence_left(seq_tensor, self.max_seq_length)  # (max_seq_length, embedding_dim)
+        padded_seq = padded_seq.unsqueeze(0)  # (1, max_seq_length, embedding_dim)
+        
+        # 3. 모델을 통한 다음 임베딩 예측
+        with torch.no_grad():
+            # 마지막 아이템 제외한 입력 시퀀스 준비
+            input_seq = padded_seq[:, :-1, :]  # (1, max_seq_length-1, embedding_dim)
+            predicted_embedding = self.model(input_seq)  # (1, embedding_dim)
+        
+        # 4. 예측 임베딩과 각 후보 임베딩 간의 유사도 계산 (코사인 유사도)
         predicted_vec = predicted_embedding.cpu().numpy()[0]
         scores = []
         for emb in candidate_embeddings:
-            # 코사인 유사도 또는 다른 유사도 측정 사용
-            similarity = np.dot(predicted_vec, emb) / (np.linalg.norm(predicted_vec) * np.linalg.norm(emb) + 1e-8)
+            norm_pred = np.linalg.norm(predicted_vec) + 1e-8
+            norm_emb = np.linalg.norm(emb) + 1e-8
+            similarity = np.dot(predicted_vec, emb) / (norm_pred * norm_emb)
             scores.append(similarity)
+        
         return scores
+
+    def retrieve_user_sequence(self, user_id: str) -> List[List[float]]:
+        """
+        주어진 user_id에 대한 사용자 최근 행동 시퀀스를 임베딩 리스트 형태로 반환하는 함수.
+        실제 프로덕션 환경에서는 데이터베이스나 로그 시스템에서 사용자 데이터를 조회하는 로직을 구현해야 함.
+        현재는 더미 데이터를 반환.
+        """
+        # TODO: 실제 사용자 시퀀스 조회 및 임베딩 변환 로직 구현
+        # 예시: return [embed_content(meta) for meta in get_user_history(user_id)]
+        return []  # 더미로 빈 리스트 반환
 
     def save(self, path: str) -> None:
         torch.save(self.model.state_dict(), path)
 
     def load(self, path: str) -> None:
         self.model.load_state_dict(torch.load(path, map_location=self.device))
+
+def pad_sequence_left(sequence: torch.Tensor, max_seq_length: int) -> torch.Tensor:
+    """
+    주어진 시퀀스(tensor)를 왼쪽에 패딩하여 max_seq_length 길이로 만듭니다.
+    sequence: (seq_length, embedding_dim) 형태의 텐서
+    반환: (max_seq_length, embedding_dim) 형태의 텐서
+    """
+    seq_length, embedding_dim = sequence.shape
+    if seq_length >= max_seq_length:
+        # 시퀀스가 이미 최대 길이 이상이면 마지막 max_seq_length 부분 사용
+        return sequence[-max_seq_length:]
+    else:
+        padding_length = max_seq_length - seq_length
+        padding = torch.zeros((padding_length, embedding_dim), dtype=sequence.dtype, device=sequence.device)
+        padded_sequence = torch.cat((padding, sequence), dim=0)
+        return padded_sequence
