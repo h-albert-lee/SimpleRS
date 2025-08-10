@@ -1,78 +1,180 @@
-## MongoDB 스키마 (추천 시스템)
+## 📄 테이블 스키마
 
-### `user`
+### `curation`
 
-| column\_name       | type           | constraints | description                                     |
-| ------------------ | -------------- | ----------- | ----------------------------------------------- |
-| \_id               | ObjectId       | PK          | MongoDB 기본 식별자                                  |
-| CUST\_NO           | Number         | Unique      | 고객 번호, 시스템 전역 식별자. `user_candidate.cust_no`와 연결 |
-| wlcm\_msg          | String         |             | 개인화 환영 메시지                                      |
-| last\_login\_dt    | ISODate / null |             | 마지막 로그인 시각                                      |
-| last\_upd\_dt      | ISODate / null |             | 사용자 정보 수정 시각                                    |
-| agreement          | Boolean        |             | 서비스 이용 동의 여부                                    |
-| user\_vec          | Array<Number>  |             | 사용자 특성 벡터 (클러스터링 ID 등)                          |
-| conc               | Array<Object>  |             | 관심사 목록 `{cat_nm: String, prto: Number}`         |
-| recent\_stocks     | Array<String>  |             | 최근 본 주식 코드 목록                                   |
-| group1\_stocks     | Array<String>  |             | 관심 그룹 1 주식 코드 목록                                |
-| onboarding\_stocks | Array<String>  |             | 온보딩 선택 주식 코드 목록                                 |
+| column\_name       | type          | constraints | description         |
+| ------------------ | ------------- | ----------- | ------------------- |
+| \_id               | 시스템키값         | PK          |                     |
+| btopic             | string        |             | 대주제                 |
+| stopic             | string        |             | 소주제                 |
+| label              | string        |             | 라벨                  |
+| gic\_code          | string        |             | 예: `UBSTLSA_005930` |
+| krw\_currv\_sumamt | int / null    |             | krw 현재시가총액          |
+| stk\_name          | string / null |             | 종목명                 |
+| title              | string        |             | 제목                  |
+| result             | string        |             | 결과값                 |
+| thumbnail          | string        |             | 썸네일파일명(CMS? NGINX?) |
+| total\_click\_cnt  | int           |             | 총 클릭수               |
+| recent\_click\_cnt | int           |             | 최근 클릭수              |
+| liked\_users       | cust\_no\[]   |             | 좋아요 표시한 고객 번호 목록    |
+| disliked\_users    | cust\_no\[]   |             | 싫어요 표시한 고객 번호 목록    |
+| live\_from         | timestamp     |             | 콘텐츠 시작일             |
+| entry\_curation    | list\[int]    |             | 진입 큐레이션 ID들         |
+| ext\_lm\_yn        | string        |             | 외부 LM 사용 여부         |
+| create\_dt         | datetime(utc) |             | 생성 일시               |
+| modi\_dt           | datetime(utc) |             | 수정 일시               |
 
 ---
 
 ### `user_candidate`
 
-| column\_name   | type                         | constraints         | description          |
-| -------------- | ---------------------------- | ------------------- | -------------------- |
-| \_id           | ObjectId                     | PK                  | MongoDB 기본 식별자       |
-| cust\_no       | Number                       | FK → `user.CUST_NO` | 고객 번호                |
-| curation\_list | Object\<curation\_id: score> |                     | 추천 후보 콘텐츠 ID-점수 딕셔너리 |
+| column\_name   | type                              | constraints         | description     |
+| -------------- | --------------------------------- | ------------------- | --------------- |
+| \_id           | 시스템키값                             | PK                  |                 |
+| cust\_no       | string                            | FK → `user.cust_no` | 고객번호            |
+| curation\_list | list\[{curation\_id, score\:int}] |                     | 추천 큐레이션 ID 및 점수 |
+| create\_dt     | datetime                          |                     | 생성 일시           |
+| modi\_dt       | datetime                          |                     | 수정 일시           |
 
 ---
 
-### `curation`
+### `user`
 
-| column\_name       | type              | constraints | description           |
-| ------------------ | ----------------- | ----------- | --------------------- |
-| \_id               | ObjectId / String | PK          | 콘텐츠 고유 ID             |
-| label              | String / null     |             | 콘텐츠 대표 식별자 (예: 주식 코드) |
-| title              | String            |             | 콘텐츠 제목                |
-| category           | String            |             | 콘텐츠 카테고리              |
-| btopic             | String            |             | 대주제                   |
-| stopic             | String            |             | 소주제                   |
-| thumbnail          | String (URL)      |             | 썸네일 이미지 URL           |
-| total\_click\_cnt  | Number            |             | 총 클릭 수                |
-| recent\_click\_cnt | Number            |             | 최근 클릭 수               |
-| like\_cnt          | Number            |             | 좋아요 수                 |
-| dislike\_cnt       | Number            |             | 싫어요 수                 |
-| functions          | String / Array    |             | 콘텐츠 기능 태그             |
+| column\_name    | type     | constraints | description                     |
+| --------------- | -------- | ----------- | ------------------------------- |
+| \_id            | 시스템키값    | PK          |                                 |
+| cust\_no        | string   |             | 고객번호                            |
+| cust\_nm        | string   |             | 고객 이름                           |
+| cyber\_id       | string   |             | 사이버 아이디                         |
+| last\_login\_dt | datetime |             | 최종 로그인 일시                       |
+| user\_vec       | array    |             | 유저 벡터 정보                        |
+| concerns        | object   |             | 관심 종목 정보 `{gic_code, stk_name}` |
+| create\_dt      | datetime |             | 생성 일시                           |
+| modi\_dt        | datetime |             | 수정 일시                           |
 
 ---
 
-### `user_port`
+### `curation_hist`
 
-| column\_name  | type          | constraints         | description    |
-| ------------- | ------------- | ------------------- | -------------- |
-| \_id          | ObjectId      | PK                  | MongoDB 기본 식별자 |
-| cust\_no      | Number        | FK → `user.CUST_NO` | 고객 번호          |
-| owned\_stocks | Array<String> |                     | 보유 주식 코드 목록    |
+| column\_name      | type            | constraints         | description |
+| ----------------- | --------------- | ------------------- | ----------- |
+| \_id              | 시스템키값           | PK                  |             |
+| curation\_id      | string          | FK → `curation._id` | 큐레이션 ID     |
+| batch\_dt         | string          |                     | 배치 수행일자     |
+| qst\_cnt          | int             |                     | 질문 수        |
+| result            | string          |                     | 결과값         |
+| component\_list   | array           |                     | 컴포넌트 목록     |
+| rsp\_ok\_yn       | string("Y"/"N") |                     | 응답 성공 여부    |
+| guardrail\_result | object          |                     | 가드레일 코드     |
 
 ---
 
-### `global_data`
+### `msg`
 
-| column\_name  | type          | constraints | description                      |
-| ------------- | ------------- | ----------- | -------------------------------- |
-| \_id          | String        | PK          | 데이터 종류 식별 키                      |
-| description   | String        |             | 데이터 설명                           |
-| curation\_ids | Array<String> |             | 추천 콘텐츠 ID 목록 (`curation._id` 참조) |
-| last\_updated | ISODate       |             | 마지막 업데이트 시각                      |
+| column\_name              | type           | constraints         | description           |
+| ------------------------- | -------------- | ------------------- | --------------------- |
+| \_id                      | ObjectId       | PK                  |                       |
+| chat\_id                  | ObjectId       | FK → `chat._id`     | 대화 ID                 |
+| question                  | string         |                     | 질문 텍스트                |
+| cust\_no                  | string         | FK → `user.cust_no` | 고객번호                  |
+| planning\_text            | string         |                     | 플래닝 텍스트               |
+| chaining\_sentences       | array\[string] |                     | 체이닝 문장                |
+| input\_guardrail\_results | list\[object]  |                     | 입력 가드레일 결과            |
+| components                | list\[object]  |                     | 컴포넌트 정보               |
+| react\_type               | string         |                     | 반응 유형(좋아요, 싫어요, 선택없음) |
+| create\_dt                | datetime       |                     | 생성 일시                 |
+| modi\_dt                  | datetime       |                     | 수정 일시                 |
+
+---
+
+### `chat`
+
+| column\_name    | type            | constraints         | description |
+| --------------- | --------------- | ------------------- | ----------- |
+| \_id            | 시스템키값           | PK                  |             |
+| cust\_no        | string          | FK → `user.cust_no` | 고객번호        |
+| start\_chat\_dt | datetime        |                     | 대화 시작일      |
+| last\_chat\_dt  | datetime        |                     | 대화 종료일      |
+| delete\_dt      | datetime / null |                     | 삭제 일시       |
+| title           | string          |                     | 대화 제목       |
+| create\_dt      | datetime        |                     | 생성 일시       |
+| modi\_dt        | datetime        |                     | 수정 일시       |
+
+---
+
+### `kill_switch`
+
+| column\_name | type            | constraints | description |
+| ------------ | --------------- | ----------- | ----------- |
+| \_id         | 시스템키값           | PK          |             |
+| kill\_yn     | string("Y"/"N") |             | 차단 여부       |
+| regmn\_id    | string          |             | 생성자 사번      |
+| adjmn\_id    | string          |             | 수정자 사번      |
+| create\_dt   | datetime        |             | 생성 일시       |
+| modi\_dt     | datetime        |             | 수정 일시       |
+
+---
+
+### `kill_switch_hist`
+
+| column\_name | type            | constraints | description |
+| ------------ | --------------- | ----------- | ----------- |
+| \_id         | 시스템키값           | PK          |             |
+| kill\_yn     | string("Y"/"N") |             | 차단 여부       |
+| regmn\_id    | string          |             | 생성자 사번      |
+| adjmn\_id    | string          |             | 수정자 사번      |
+| create\_dt   | datetime        |             | 생성 일시       |
+| modi\_dt     | datetime        |             | 수정 일시       |
+
+---
+
+### `user_feedback`
+
+| column\_name | type     | constraints         | description |
+| ------------ | -------- | ------------------- | ----------- |
+| \_id         | 시스템키값    | PK                  |             |
+| cust\_no     | string   | FK → `user.cust_no` | 고객번호        |
+| feedback     | string   |                     | 피드백 내용      |
+| create\_dt   | datetime |                     | 생성 일시       |
+
+---
+
+### `user_stat`
+
+| column\_name  | type             | constraints         | description |
+| ------------- | ---------------- | ------------------- | ----------- |
+| \_id          | 시스템키값            | PK                  |             |
+| base\_ymd     | string(YYYYMMDD) |                     | 카운트 시점      |
+| cust\_no      | string           | FK → `user.cust_no` | 고객번호        |
+| question\_cnt | int              |                     | 질문 건수       |
+| create\_dt    | datetime         |                     | 생성 일시       |
+| modi\_dt      | datetime         |                     | 수정 일시       |
+
+---
+
+### `session`
+
+| column\_name | type                | constraints         | description |
+| ------------ | ------------------- | ------------------- | ----------- |
+| \_id         | 시스템키값               | PK                  |             |
+| service      | string              |                     | 서비스 구분      |
+| cust\_no     | string              | FK → `user.cust_no` | 고객번호        |
+| cust\_nm     | string              |                     | 고객 이름       |
+| cyber\_id    | string              |                     | 사이버 아이디     |
+| create\_dt   | datetime(ttl index) |                     | 생성 일시       |
 
 ---
 
 ## 🔗 FK 관계 요약
 
-* `user_candidate.cust_no` → `user.CUST_NO`
-* `user_port.cust_no` → `user.CUST_NO`
-* `global_data.curation_ids[]` → `curation._id`
+* `user_candidate.cust_no` → `user.cust_no`
+* `user_feedback.cust_no` → `user.cust_no`
+* `user_stat.cust_no` → `user.cust_no`
+* `session.cust_no` → `user.cust_no`
+* `msg.chat_id` → `chat._id`
+* `msg.cust_no` → `user.cust_no`
+* `chat.cust_no` → `user.cust_no`
+* `curation_hist.curation_id` → `curation._id`
 
 ---
 
@@ -80,8 +182,12 @@
 
 ```mermaid
 erDiagram
-    user ||--o{ user_candidate : "CUST_NO"
-    user ||--o{ user_port : "CUST_NO"
-    curation ||--o{ user_candidate : "_id → curation_id"
-    global_data ||--o{ curation : "curation_ids"
+    user ||--o{ user_candidate : "cust_no"
+    user ||--o{ user_feedback : "cust_no"
+    user ||--o{ user_stat : "cust_no"
+    user ||--o{ session : "cust_no"
+    user ||--o{ chat : "cust_no"
+    user ||--o{ msg : "cust_no"
+    chat ||--o{ msg : "chat_id"
+    curation ||--o{ curation_hist : "_id → curation_id"
 ```
