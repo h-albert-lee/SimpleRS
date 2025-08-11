@@ -7,17 +7,23 @@ from typing import List, Dict, Any, Set
 from batch.rules.local_rules import (
     LocalMarketContentRule, LocalOwnedStockContentRule, LocalSectorContentRule
 )
+from batch.utils.data_loader import fetch_user_portfolio
 
 logger = logging.getLogger(__name__)
 
-def compute_local_candidates(user: Dict[str, Any], context: Dict[str, Any]) -> List[str]: # context 인자 추가
-    """
-    개별 사용자 정보(user)와 컨텍스트(context)를 받아 로컬 후보를 생성합니다.
-    """
-    user_id = user.get('id', 'UNKNOWN_USER') # 사용자 식별자 (user 딕셔너리 내 필드 확인)
+def compute_local_candidates(user: Dict[str, Any], context: Dict[str, Any]) -> List[str]:  # context 인자 추가
+    """개별 사용자 정보(user)와 컨텍스트(context)를 받아 로컬 후보를 생성합니다."""
+    user_id = user.get('cust_no', 'UNKNOWN_USER')  # 사용자 식별자 (user 딕셔너리 내 필드 확인)
     log_prefix = f"[User: {user_id}]"
     logger.debug(f"{log_prefix} Computing local candidates...")
     all_candidates: Set[str] = set()
+
+    # --- 사용자 포트폴리오 사전 로딩 ---
+    portfolio_data = context.get('portfolio_data')
+    if portfolio_data is None:
+        portfolio_data = fetch_user_portfolio(user_id)
+    user_context = dict(context)
+    user_context['portfolio_data'] = portfolio_data
 
     # --- 1. 순차 실행이 필요한 규칙들 ---
     sequential_rules = [
@@ -30,7 +36,7 @@ def compute_local_candidates(user: Dict[str, Any], context: Dict[str, Any]) -> L
             rule_name = getattr(rule, 'rule_name', type(rule).__name__)
             try:
                 # 사용자 정보와 컨텍스트 전달
-                rule_candidates = rule.apply(user, context)
+                rule_candidates = rule.apply(user, user_context)
                 if isinstance(rule_candidates, list):
                     count = len(rule_candidates)
                     logger.debug(f"{log_prefix} Seq Rule '{rule_name}' generated {count} candidates.")
@@ -60,7 +66,7 @@ def compute_local_candidates(user: Dict[str, Any], context: Dict[str, Any]) -> L
     delayed_results = []
     for rule in parallel_rules:
         # 사용자 정보와 컨텍스트 전달
-        delayed_result = delayed(rule.apply)(user, context)
+        delayed_result = delayed(rule.apply)(user, user_context)
         delayed_results.append(delayed_result)
 
     # 병렬 실행 및 결과 취합

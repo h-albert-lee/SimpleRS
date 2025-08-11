@@ -391,5 +391,8 @@ def fetch_latest_stock_data(os_client, days_back: int = 3, max_records: int = 10
             seen_codes.add(code)
             unique_stock_data.append(stock)
     
-    logger.info(f"Fetched {len(unique_stock_data)} unique stock records from OpenSearch ({successful_queries}/{days_back} indexes successful)")
+    logger.info(
+        f"Fetched {len(unique_stock_data)} unique stock records from OpenSearch "
+        f"({successful_queries}/{days_back} indexes successful)"
+    )
     return unique_stock_data
