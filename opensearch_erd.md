@@ -2,19 +2,51 @@
 
 ### 1. `curation-logs-YYYYMMDD` 인덱스
 
-* **목적**: 사용자의 콘텐츠 소비 로그(클릭, 조회 등)를 저장 (실시간 규칙에서 활용)
+* **목적**: 사용자의 콘텐츠 소비 로그(클릭, 만족도, 새로고침 등)를 저장 (실시간 규칙에서 활용)
 * **인덱스 패턴**: `curation-logs-YYYYMMDD` (예: `curation-logs-20250416`)
 
-| field            | type           | constraints | description                       |
-| ---------------- | -------------- | ----------- | --------------------------------- |
-| @timestamp       | date           | required    | 로그 발생 시간 (UTC 권장)                 |
-| cust\_no         | long / keyword | required    | 고객 번호 (`user.CUST_NO`와 매칭)        |
-| curation\_id     | keyword        | required    | 상호작용한 콘텐츠 ID (`curation._id`와 매칭) |
-| curation\_title  | text / keyword | optional    | 콘텐츠 제목 (분석용)                      |
-| user\_action     | object         | optional    | 사용자 행동 정보 객체                      |
-| ├─ action        | number         | optional    | 행동 유형 (1=클릭, 2=상세조회 등)            |
-| ├─ duration      | number         | optional    | 체류 시간 (초)                         |
-| └─ scroll\_depth | float          | optional    | 스크롤 깊이 (0.0 \~ 1.0)               |
+| field             | type             | constraints | description                       |
+| ----------------- | ---------------- | ----------- | --------------------------------- |
+| timestamp         | date             | required    | 로그 발생 시간 (UTC 권장)                 |
+| cust\_no          | long / keyword   | required    | 고객 번호 (`user.CUST_NO`와 매칭)        |
+| curation\_id      | keyword          | required    | 상호작용한 콘텐츠 ID (`curation._id`와 매칭) |
+| curation\_title   | text / keyword   | optional    | 콘텐츠 제목 (분석용)                      |
+| user\_action      | object           | optional    | 사용자 행동 정보 객체                      |
+| ├─ sati\_yn       | keyword("Y"/"N") | optional    | 만족 여부                             |
+| ├─ sati\_dt       | date             | optional    | 만족 입력 일시                          |
+| ├─ click\_btn\_nm | keyword          | optional    | 클릭된 버튼명(예: "현재가", "주문")           |
+| ├─ click\_dt      | date             | optional    | 버튼 클릭 일시                          |
+| ├─ refresh\_yn    | keyword("Y"/"N") | optional    | 새로고침 여부                           |
+| └─ refresh\_dt    | date             | optional    | 갱신(새로고침) 일시                       |
+
+**예시 Document**
+
+```json
+{
+  "timestamp": "2025-04-16T15:30:00Z",
+  "cust_no": 1061202611,
+  "curation_id": "661e1a0b1122334455667799",
+  "curation_title": "카카오 주가, 반등의 시작?",
+  "user_action": {
+    "sati_yn": "Y",
+    "sati_dt": "2025-04-16T15:31:20Z",
+    "click_btn_nm": "현재가",
+    "click_dt": "2025-04-16T15:30:45Z",
+    "refresh_yn": "N",
+    "refresh_dt": null
+  }
+}
+```
+
+\-------|------|-------------|-------------|
+\| @timestamp | date | required | 로그 발생 시간 (UTC 권장) |
+\| cust\_no | long / keyword | required | 고객 번호 (`user.CUST_NO`와 매칭) |
+\| curation\_id | keyword | required | 상호작용한 콘텐츠 ID (`curation._id`와 매칭) |
+\| curation\_title | text / keyword | optional | 콘텐츠 제목 (분석용) |
+\| user\_action | object | optional | 사용자 행동 정보 객체 |
+\| ├─ action | number | optional | 행동 유형 (1=클릭, 2=상세조회 등) |
+\| ├─ duration | number | optional | 체류 시간 (초) |
+\| └─ scroll\_depth | float | optional | 스크롤 깊이 (0.0 \~ 1.0) |
 
 **예시 Document**
 
