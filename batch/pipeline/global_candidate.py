@@ -9,7 +9,7 @@ from batch.utils.db_manager import get_mongo_db, get_os_client, get_oracle_pool
 # from batch.utils.data_loader import fetch_latest_stock_data # 예시
 
 # --- 규칙 클래스 직접 임포트 ---
-from batch.rules.global_rules import GlobalStockTopReturnRule, GlobalTopLikeContentRule
+from batch.rules.global_rules import GlobalStockTopReturnRule
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,6 @@ def compute_global_candidates(context: Dict[str, Any]) -> List[str]:
     # --- 2. 병렬 실행 규칙 ---
     parallel_rules = [
         GlobalStockTopReturnRule(),
-        GlobalTopLikeContentRule(),
     ]
 
     if not parallel_rules:
