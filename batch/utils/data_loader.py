@@ -4,8 +4,29 @@ from typing import Dict, List, Any
 from collections import defaultdict
 from datetime import datetime, timedelta
 import pandas as pd # Timestamp 사용 시
+import requests
+import json
+import time
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
+
+class DataLoaderError(Exception):
+    """데이터 로더 관련 예외"""
+    pass
+
+class APIConnectionError(DataLoaderError):
+    """API 연결 관련 예외"""
+    pass
+
+class DataValidationError(DataLoaderError):
+    """데이터 검증 관련 예외"""
+    pass
+
+class RateLimitError(DataLoaderError):
+    """API 호출 제한 관련 예외"""
+    pass
 
 def load_user_interactions(db: Any, user_ids: List[str], days_limit: int = 30) -> Dict[str, List[str]]:
     """
@@ -85,20 +106,34 @@ def load_user_interactions(db: Any, user_ids: List[str], days_limit: int = 30) -
 
 # 다른 데이터 로더 함수들 추가 가능 (예: fetch_stock_metadata)
 
-def fetch_user_portfolio(customer_no: str, api_base_url: str = "http://172.17.4.53:8150") -> Dict[str, Any]:
+def fetch_user_portfolio(customer_no: str, api_base_url: str = "http://172.17.4.53:8150", 
+                        max_retries: int = 3, timeout: int = 15) -> Dict[str, Any]:
     """
     사용자 포트폴리오 정보를 외부 API에서 가져옵니다.
     
     Args:
         customer_no: 고객번호
         api_base_url: API 서버 기본 URL
+        max_retries: 최대 재시도 횟수
+        timeout: 요청 타임아웃 (초)
         
     Returns:
         포트폴리오 정보 딕셔너리
+        
+    Raises:
+        APIConnectionError: API 연결 실패
+        DataValidationError: 데이터 검증 실패
+        RateLimitError: API 호출 제한 초과
     """
-    import requests
+    # 입력 검증
+    if not validate_customer_id(customer_no):
+        logger.warning(f"Invalid customer ID format: {customer_no}, returning empty portfolio")
+        return {}
     
-    logger.debug(f"Fetching portfolio for customer: {customer_no}")
+    if not api_base_url or not isinstance(api_base_url, str):
+        raise DataValidationError(f"Invalid API base URL: {api_base_url}")
+    
+    session = create_robust_session(max_retries)
     
     try:
         url = f"{api_base_url}/api/mu800"
@@ -108,31 +143,112 @@ def fetch_user_portfolio(customer_no: str, api_base_url: str = "http://172.17.4.
             "top_n": 50  # 충분한 수의 종목 정보 가져오기
         }
         
-        response = requests.post(url, json=payload, timeout=10)
+        logger.debug(f"Fetching portfolio for customer: {customer_no} from {url}")
+        
+        start_time = time.time()
+        response = session.post(url, json=payload, timeout=timeout)
+        elapsed_time = time.time() - start_time
+        
+        logger.info(f"Portfolio API response time: {elapsed_time:.2f}s, status: {response.status_code}")
+        
+        # HTTP 상태 코드 체크
+        if response.status_code == 429:
+            logger.warning(f"API rate limit exceeded for customer {customer_no}, returning empty portfolio")
+            return {}
+        elif response.status_code == 404:
+            logger.warning(f"Customer {customer_no} not found in portfolio API")
+            return {}
+        elif response.status_code >= 500:
+            logger.error(f"Server error (status {response.status_code}) for customer {customer_no}")
+            return {}
+        
         response.raise_for_status()
         
-        data = response.json()
+        # JSON 파싱
+        try:
+            data = response.json()
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON response for customer {customer_no}: {e}")
+            return {}
+        
+        # 응답 데이터 검증
+        if not isinstance(data, dict):
+            logger.warning(f"Unexpected response format for customer {customer_no}: {type(data)}")
+            return {}
+        
         logger.debug(f"Successfully fetched portfolio for customer {customer_no}")
         return data
         
-    except Exception as e:
-        logger.error(f"Error fetching portfolio for customer {customer_no}: {e}")
+    except requests.exceptions.Timeout:
+        logger.error(f"Timeout ({timeout}s) fetching portfolio for customer {customer_no}")
         return {}
+        
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Connection error fetching portfolio for customer {customer_no}: {e}")
+        return {}
+        
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP error fetching portfolio for customer {customer_no}: {e}")
+        return {}
+        
+    except Exception as e:
+        logger.error(f"Unexpected error fetching portfolio for customer {customer_no}: {e}")
+        return {}
+    
+    finally:
+        session.close()
 
-def fetch_latest_stock_data(os_client, days_back: int = 1) -> List[Dict[str, Any]]:
+def validate_opensearch_client(os_client) -> bool:
+    """
+    OpenSearch 클라이언트의 유효성을 검증합니다.
+    
+    Args:
+        os_client: OpenSearch 클라이언트
+        
+    Returns:
+        유효하면 True, 아니면 False
+    """
+    if not os_client:
+        return False
+        
+    try:
+        # 간단한 ping 테스트
+        response = os_client.ping()
+        return response
+    except Exception as e:
+        logger.warning(f"OpenSearch client validation failed: {e}")
+        return False
+
+def fetch_latest_stock_data(os_client, days_back: int = 3, max_records: int = 1000) -> List[Dict[str, Any]]:
     """
     OpenSearch에서 최신 주식 시세 데이터를 가져옵니다.
     
     Args:
         os_client: OpenSearch 클라이언트
         days_back: 며칠 전까지 데이터를 조회할지
+        max_records: 최대 조회할 레코드 수
         
     Returns:
         주식 시세 데이터 리스트
+        
+    Raises:
+        APIConnectionError: OpenSearch 연결 실패
+        DataValidationError: 데이터 검증 실패
     """
-    logger.info("Fetching latest stock data from OpenSearch...")
+    if not validate_opensearch_client(os_client):
+        logger.error("OpenSearch client is not available or not responding")
+        return []
+    
+    if days_back <= 0 or days_back > 30:
+        raise DataValidationError(f"Invalid days_back value: {days_back}. Must be between 1 and 30.")
+    
+    if max_records <= 0 or max_records > 10000:
+        raise DataValidationError(f"Invalid max_records value: {max_records}. Must be between 1 and 10000.")
+    
+    logger.info(f"Fetching latest stock data from OpenSearch (last {days_back} days, max {max_records} records)...")
     
     stock_data = []
+    successful_queries = 0
     
     # 최근 며칠간의 인덱스에서 데이터 조회
     for i in range(days_back):
@@ -140,16 +256,24 @@ def fetch_latest_stock_data(os_client, days_back: int = 1) -> List[Dict[str, Any
         index_name = f"screen-{date}"
         
         try:
+            logger.debug(f"Querying index: {index_name}")
+            
+            start_time = time.time()
             response = os_client.search(
                 index=index_name,
-                size=1000,  # 충분한 수의 데이터 조회
-                _source=["shrt_code", "country", "1d_returns", "close_price", "volume"],
+                size=max_records,
+                _source=["shrt_code", "country", "1d_returns", "close_price", "volume", "market_cap"],
                 body={
                     "query": {
                         "bool": {
                             "must": [
                                 {"exists": {"field": "1d_returns"}},
-                                {"terms": {"country": ["Korea", "USA"]}}
+                                {"terms": {"country": ["Korea", "USA"]}},
+                                {"range": {"1d_returns": {"gte": -50, "lte": 50}}}  # 비현실적인 수익률 제외
+                            ],
+                            "must_not": [
+                                {"term": {"shrt_code": ""}},  # 빈 종목코드 제외
+                                {"range": {"1d_returns": {"gte": "null"}}}  # null 값 제외
                             ]
                         }
                     },
@@ -157,20 +281,62 @@ def fetch_latest_stock_data(os_client, days_back: int = 1) -> List[Dict[str, Any
                 },
                 ignore=[404]
             )
+            elapsed_time = time.time() - start_time
             
+            if 'hits' not in response:
+                logger.warning(f"No hits field in response for index {index_name}")
+                continue
+                
             hits = response.get('hits', {}).get('hits', [])
+            valid_records = 0
+            
             for hit in hits:
                 source = hit.get('_source', {})
-                if source.get('shrt_code') and source.get('1d_returns') is not None:
-                    stock_data.append(source)
+                
+                # 데이터 검증
+                if not source.get('shrt_code'):
+                    continue
                     
-            if hits:
-                logger.debug(f"Found {len(hits)} stock records in index {index_name}")
-                break  # 데이터를 찾으면 더 이전 날짜는 조회하지 않음
+                if source.get('1d_returns') is None:
+                    continue
+                    
+                try:
+                    # 수익률이 숫자인지 확인
+                    returns = float(source.get('1d_returns', 0))
+                    if abs(returns) > 50:  # 50% 이상 변동은 비현실적
+                        continue
+                        
+                    source['1d_returns'] = returns
+                    stock_data.append(source)
+                    valid_records += 1
+                    
+                except (ValueError, TypeError):
+                    logger.debug(f"Invalid 1d_returns value for {source.get('shrt_code')}: {source.get('1d_returns')}")
+                    continue
+                    
+            logger.info(f"Index {index_name}: {valid_records} valid records in {elapsed_time:.2f}s")
+            successful_queries += 1
+            
+            # 충분한 데이터를 얻었으면 중단
+            if len(stock_data) >= max_records // 2:
+                break
                 
         except Exception as e:
             logger.warning(f"Error querying index {index_name}: {e}")
             continue
     
-    logger.info(f"Fetched {len(stock_data)} stock records from OpenSearch")
-    return stock_data
+    if successful_queries == 0:
+        logger.error("Failed to query any OpenSearch indexes")
+        return []
+    
+    # 중복 제거 (같은 종목코드)
+    seen_codes = set()
+    unique_stock_data = []
+    for stock in stock_data:
+        code = stock.get('shrt_code')
+        if code not in seen_codes:
+            seen_codes.add(code)
+            unique_stock_data.append(stock)
+    
+    logger.info(f"Fetched {len(unique_stock_data)} unique stock records from OpenSearch ({successful_queries}/{days_back} indexes successful)")
+    return unique_stock_data
