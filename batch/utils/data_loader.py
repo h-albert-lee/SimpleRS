@@ -3,12 +3,13 @@ import logging
 from typing import Dict, List, Any
 from collections import defaultdict
 from datetime import datetime, timedelta
-import pandas as pd # Timestamp 사용 시
+import pandas as pd  # Timestamp 사용 시
 import requests
 import json
 import time
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from opensearchpy.helpers import scan  # [추가] 대용량 데이터 처리를 위한 scan 헬퍼
 
 logger = logging.getLogger(__name__)
 
@@ -81,81 +82,69 @@ def create_robust_session(max_retries: int = 3, backoff_factor: float = 0.3) -> 
     session.mount("https://", adapter)
     return session
 
-def load_user_interactions(db: Any, user_ids: List[str], days_limit: int = 30) -> Dict[str, List[str]]:
-    """
-    MongoDB 등에서 특정 기간 동안의 사용자 상호작용 기록을 로드합니다.
+def load_user_interactions(os_client: Any, days_limit: int) -> Dict[str, List[str]]:
+    """OpenSearch에서 최근 사용자 상호작용 로그를 로드합니다."""
 
-    Args:
-        db: MongoDB 데이터베이스 객체.
-        user_ids: 상호작용 기록을 로드할 사용자 ID 리스트.
-        days_limit: 조회할 최근 기간 (일 단위).
-
-    Returns:
-        {user_id: [item_id1, item_id2, ...]} 형태의 딕셔너리. (최신순 정렬 가정)
-    """
-    logger.info(f"Loading user interactions for {len(user_ids)} users (last {days_limit} days)...")
-    interactions = defaultdict(list)
+    log_prefix = "[DataLoader-UserInteractions]"
+    logger.info(
+        f"{log_prefix} Loading user interactions from OpenSearch (last {days_limit} days)..."
+    )
+    interactions: Dict[str, List[str]] = defaultdict(list)
     start_time = pd.Timestamp.now()
 
-    if not user_ids:
-        return interactions
+    if not validate_opensearch_client(os_client):
+        logger.error(f"{log_prefix} OpenSearch client is not available.")
+        return dict(interactions)
+
+    index_pattern = (
+        f"curation-logs-{(datetime.utcnow() - timedelta(days=days_limit)).strftime('%Y%m')}*"
+    )
+
+    query = {
+        "query": {
+            "range": {
+                "@timestamp": {
+                    "gte": f"now-{days_limit}d/d",
+                    "lt": "now/d",
+                }
+            }
+        },
+        "_source": ["cust_no", "curation_id"],
+    }
 
     try:
-        # MongoDB 컬렉션 이름 확인 필요 (예: curation-logs 또는 다른 상호작용 로그 컬렉션)
-        logs_collection = db['curation_logs_prod'] # 예시 컬렉션 이름
-        end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=days_limit)
+        response = scan(
+            client=os_client,
+            index=index_pattern,
+            query=query,
+            scroll="5m",
+            raise_on_error=True,
+            preserve_order=False,
+            clear_scroll=True,
+        )
 
-        # 사용자 ID 필드명, 아이템 ID 필드명, 타임스탬프 필드명 확인 필요
-        # 예시 필드명: cust_no, curation_id, @timestamp
-        user_id_field = "cust_no" # 실제 필드명으로 변경
-        item_id_field = "curation_id" # 실제 필드명으로 변경
-        timestamp_field = "@timestamp" # 실제 필드명으로 변경
-
-        query = {
-            user_id_field: {"$in": user_ids},
-            timestamp_field: {"$gte": start_date, "$lt": end_date}
-        }
-        projection = {
-            user_id_field: 1,
-            item_id_field: 1,
-            timestamp_field: 1,
-            "_id": 0
-        }
-
-        # 효율적인 조회를 위해 인덱스 필요: (user_id_field, timestamp_field)
-        cursor = logs_collection.find(query, projection).sort(timestamp_field, -1) # 최신순 정렬
-
-        loaded_count = 0
-        for log in cursor:
-            user_id = log.get(user_id_field)
-            item_id = log.get(item_id_field)
-            # 사용자 ID 와 아이템 ID 가 유효한 경우에만 추가
-            if user_id is not None and item_id:
-                # 사용자 ID 타입을 문자열로 통일 (필요시)
-                str_user_id = str(user_id)
-                # 사용자의 상호작용 목록에 아이템 추가 (중복 제거는 CF/CB 로직에서 처리)
-                interactions[str_user_id].append(item_id)
-                loaded_count += 1
+        processed_logs = 0
+        for hit in response:
+            source = hit.get("_source", {})
+            user_id = source.get("cust_no")
+            item_id = source.get("curation_id")
+            if user_id and item_id:
+                interactions[str(user_id)].append(str(item_id))
+                processed_logs += 1
 
         duration = (pd.Timestamp.now() - start_time).total_seconds()
-        logger.info(f"Loaded {loaded_count} interaction logs for {len(interactions)} users in {duration:.2f} seconds.")
-
-        # # --- 임시 더미 데이터 ---
-        # logger.warning("Using dummy user interaction data for CF/CB!")
-        # import numpy as np
-        # content_meta_map = context.get('content_meta_map',{}) # 예시
-        # items = list(content_meta_map.keys()) if content_meta_map else [f'item_{i}' for i in range(100)]
-        # if items:
-        #    for i, user_id in enumerate(user_ids):
-        #         if i < len(user_ids) * 0.5 : # 50% 유저에게만 기록 부여
-        #             interactions[str(user_id)] = np.random.choice(items, size=min(len(items), 30), replace=False).tolist()
-
+        logger.info(
+            f"{log_prefix} Loaded {processed_logs} interaction logs for {len(interactions)} users in {duration:.2f} seconds."
+        )
 
     except Exception as e:
-        logger.error(f"Error loading user interactions: {e}", exc_info=True)
+        logger.error(
+            f"{log_prefix} Failed to load user interactions using scan: {e}",
+            exc_info=True,
+        )
+        return {}
 
-    return interactions
+    return dict(interactions)
 
 # 다른 데이터 로더 함수들 추가 가능 (예: fetch_stock_metadata)
 

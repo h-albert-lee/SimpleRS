@@ -23,6 +23,8 @@ from batch.pipeline.global_candidate import compute_global_candidates
 from batch.pipeline.final_candidate import generate_candidate_for_user
 # 데이터 로더
 from batch.utils.data_loader import load_user_interactions, APIConnectionError, DataValidationError
+from batch.utils.config_loader import CF_INTERACTION_LOG_DAYS
+from batch.utils.cf_utils import CFModel
 
 # --- 로깅 설정 ---
 setup_logging()
@@ -144,6 +146,17 @@ def main():
             logger.error(f"Data computation failed: {e}")
             raise BatchProcessError(f"Failed to compute base data: {e}")
 
+        # --- CF 모델링을 위한 데이터 로딩 및 모델 빌드 ---
+        logger.info("--- CF Model Building Step ---")
+        user_interactions = load_user_interactions(
+            os_client, days_limit=CF_INTERACTION_LOG_DAYS
+        )
+        cf_model = CFModel()
+        if user_interactions:
+            cf_model.build(user_interactions)
+        else:
+            logger.warning("No user interaction data found, CF model will be empty.")
+
         # --- 초기 컨텍스트 생성 ---
         logger.info("Creating base context...")
         try:
@@ -154,6 +167,8 @@ def main():
                 'os_client': os_client,
                 'oracle_pool': oracle_pool,
                 'max_candidates_per_user': 100,
+                'cf_model': cf_model,
+                'user_interactions': user_interactions,
             }
             logger.info("Base context created successfully.")
         except Exception as e:

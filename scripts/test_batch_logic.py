@@ -102,24 +102,46 @@ def test_rules():
     except Exception as e:
         logger.error(f"Error testing local rules: {e}")
     
-    logger.info("Testing Final Candidate Generation...")
+    logger.info("Testing Final Candidate Generation with CF...")
     try:
         from batch.pipeline.final_candidate import generate_candidate_for_user
-        
-        # 더미 후보들
-        global_candidates = [f"content_{i}" for i in range(0, 10)]
-        other_candidates = [f"content_{i}" for i in range(10, 20)]
-        
+        from batch.utils.cf_utils import CFModel
+        from batch.utils.config_loader import SOURCE_WEIGHTS, CF_WEIGHT
+
+        user_interactions = {
+            dummy_user['cust_no']: ['item_A'],
+            'u2': ['item_A', 'item_B'],
+            'u3': ['item_A', 'item_B'],
+        }
+
+        cf_model = CFModel()
+        cf_model.build(user_interactions)
+
+        cf_context = dict(dummy_context)
+        cf_context['cf_model'] = cf_model
+        cf_context['user_interactions'] = user_interactions
+        cf_context['contents_list'] = []  # 로컬 후보 비활성화를 위해
+        cf_context['content_meta_map'] = {}
+        cf_context['portfolio_data'] = {}
+
+        global_candidates = []
+        other_candidates = ['item_B']
+
         result = generate_candidate_for_user(
-            dummy_user, 
-            global_candidates, 
-            other_candidates, 
-            dummy_context
+            dummy_user,
+            global_candidates,
+            other_candidates,
+            cf_context
         )
-        
-        logger.info(f"Final result: {result}")
-        logger.info(f"Generated {len(result.get('curation_list', []))} scored candidates")
-        
+
+        logger.info(f"Final result with CF: {result}")
+        expected_score = SOURCE_WEIGHTS.get('other', 0.0) + CF_WEIGHT * (2/3)
+        actual_score = result['curation_list'][0]['score'] if result else None
+        assert abs(actual_score - expected_score) < 1e-6
+        logger.info(
+            f"Expected score {expected_score:.4f}, Actual score {actual_score:.4f}"
+        )
+
     except Exception as e:
         logger.error(f"Error testing final candidate generation: {e}")
 

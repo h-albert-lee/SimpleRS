@@ -29,17 +29,20 @@ OPENSEARCH_CONFIG = config.get("opensearch", {})
 ORACLE_CONFIG = config.get("oracledb", {})
 # --- 배치 스코어링 설정 로드 ---
 BATCH_SCORING_CONFIG = config.get("batch_scoring", {})
-# 개별 설정값 로드 (기본값 제공)
-SOURCE_WEIGHTS = BATCH_SCORING_CONFIG.get("source_weights", {"global": 0.1, "cluster": 0.1, "local": 0.1})
-CF_WEIGHT = BATCH_SCORING_CONFIG.get("cf_weight", 0.0)
+# 소스 가중치 및 CF 관련 설정 로드
+SOURCE_WEIGHTS = BATCH_SCORING_CONFIG.get("source_weights", {})
+CF_CONFIG = BATCH_SCORING_CONFIG.get("cf_config", {})
+CF_WEIGHT = SOURCE_WEIGHTS.get("cf", 0.0)
+CF_SIMILARITY_METRIC = CF_CONFIG.get("similarity_metric", "jaccard")
+CF_USER_HISTORY_LIMIT = CF_CONFIG.get("user_history_limit", 100)
+CF_MIN_CO_OCCURRENCE = CF_CONFIG.get("min_co_occurrence", 2)
+CF_INTERACTION_LOG_DAYS = CF_CONFIG.get("interaction_log_days", 30)
+
 CB_WEIGHT = BATCH_SCORING_CONFIG.get("cb_weight", 0.0)
 MIN_SCORE_THRESHOLD = BATCH_SCORING_CONFIG.get("min_score_threshold", 0.0)
 MAX_CANDIDATES_PER_USER = BATCH_SCORING_CONFIG.get("max_candidates_per_user", 500)
 CB_TFIDF_FIELDS = BATCH_SCORING_CONFIG.get("cb_tfidf_fields", ["title"])
 CB_USER_HISTORY_LIMIT = BATCH_SCORING_CONFIG.get("cb_user_history_limit", 50)
-CF_ITEM_SIMILARITY_METRIC = BATCH_SCORING_CONFIG.get("cf_item_similarity_metric", "jaccard")
-CF_USER_HISTORY_LIMIT = BATCH_SCORING_CONFIG.get("cf_user_history_limit", 100)
-CF_MIN_CO_OCCURRENCE = BATCH_SCORING_CONFIG.get("cf_min_co_occurrence", 2)
 
 
 # MongoDB URI 옵션 추가
