@@ -94,10 +94,12 @@ class LocalOwnedStockContentRule(BaseLocalRule):
             return []
         
         try:
-            # 사용자 포트폴리오 정보 조회
-            logger.debug(f"[{user_id}] {self.rule_name}: Fetching user portfolio...")
-            portfolio_data = fetch_user_portfolio(user_id)
-            
+            # 사용자 포트폴리오 정보 조회 (컨텍스트에 캐시된 데이터 우선 사용)
+            portfolio_data = context.get('portfolio_data')
+            if portfolio_data is None:
+                logger.debug(f"[{user_id}] {self.rule_name}: Fetching user portfolio...")
+                portfolio_data = fetch_user_portfolio(user_id)
+
             if not portfolio_data:
                 logger.debug(f"[{user_id}] {self.rule_name}: No portfolio data available")
                 return []
@@ -196,10 +198,12 @@ class LocalSectorContentRule(BaseLocalRule):
             return []
         
         try:
-            # 사용자 포트폴리오 정보 조회
-            logger.debug(f"[{user_id}] {self.rule_name}: Fetching user portfolio for sector analysis...")
-            portfolio_data = fetch_user_portfolio(user_id)
-            
+            # 사용자 포트폴리오 정보 조회 (컨텍스트에 캐시된 데이터 우선 사용)
+            portfolio_data = context.get('portfolio_data')
+            if portfolio_data is None:
+                logger.debug(f"[{user_id}] {self.rule_name}: Fetching user portfolio for sector analysis...")
+                portfolio_data = fetch_user_portfolio(user_id)
+
             if not portfolio_data:
                 logger.debug(f"[{user_id}] {self.rule_name}: No portfolio data available")
                 return []

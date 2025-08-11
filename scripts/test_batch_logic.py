@@ -31,11 +31,20 @@ def test_rules():
             "create_dt": datetime.now() - timedelta(days=random.randint(1, 30))
         }
         dummy_contents.append(content)
-    
+
+    dummy_portfolio = {
+        'portfolio_info': [
+            {'kor_name': '삼성전자', 'gic_code': '005930', 'sector': 'IT'},
+            {'kor_name': 'SK하이닉스', 'gic_code': '000660', 'sector': 'IT'}
+        ],
+        'sector_weight': {'IT': 1.0}
+    }
+
     dummy_context = {
         'contents_list': dummy_contents,
         'content_meta_map': {c['_id']: c for c in dummy_contents},
         'max_candidates_per_user': 100,
+        'portfolio_data': dummy_portfolio,
     }
     
     # 더미 사용자

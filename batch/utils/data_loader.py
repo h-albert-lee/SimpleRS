@@ -28,6 +28,59 @@ class RateLimitError(DataLoaderError):
     """API 호출 제한 관련 예외"""
     pass
 
+
+def validate_customer_id(customer_no: str, max_length: int = 20) -> bool:
+    """간단한 고객번호 형식 검증 함수.
+
+    고객번호가 숫자로만 이루어져 있고 지정된 최대 길이를 넘지 않는지 확인한다.
+
+    Args:
+        customer_no: 검증할 고객번호
+        max_length: 허용할 최대 길이 (기본 20)
+
+    Returns:
+        고객번호가 유효한 형식이면 True, 그렇지 않으면 False
+    """
+
+    if customer_no is None:
+        return False
+
+    # 문자열이 아니면 문자열로 변환 후 검사
+    if not isinstance(customer_no, str):
+        customer_no = str(customer_no)
+
+    if not customer_no.isdigit():
+        return False
+
+    if len(customer_no) == 0 or len(customer_no) > max_length:
+        return False
+
+    return True
+
+
+def create_robust_session(max_retries: int = 3, backoff_factor: float = 0.3) -> requests.Session:
+    """재시도 로직이 포함된 requests 세션을 생성합니다.
+
+    Args:
+        max_retries: 최대 재시도 횟수
+        backoff_factor: 재시도 간 대기 시간 배율
+
+    Returns:
+        재시도 설정이 적용된 requests.Session 객체
+    """
+
+    session = requests.Session()
+    retries = Retry(
+        total=max_retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST"],
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
 def load_user_interactions(db: Any, user_ids: List[str], days_limit: int = 30) -> Dict[str, List[str]]:
     """
     MongoDB 등에서 특정 기간 동안의 사용자 상호작용 기록을 로드합니다.
@@ -338,5 +391,8 @@ def fetch_latest_stock_data(os_client, days_back: int = 3, max_records: int = 10
             seen_codes.add(code)
             unique_stock_data.append(stock)
     
-    logger.info(f"Fetched {len(unique_stock_data)} unique stock records from OpenSearch ({successful_queries}/{days_back} indexes successful)")
+    logger.info(
+        f"Fetched {len(unique_stock_data)} unique stock records from OpenSearch "
+        f"({successful_queries}/{days_back} indexes successful)"
+    )
     return unique_stock_data
