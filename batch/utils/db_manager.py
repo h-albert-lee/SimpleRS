@@ -250,9 +250,9 @@ def load_user_port(db) -> dd.DataFrame:
         raise
 
 # --- 결과 저장 함수 (수정 없음) ---
-def save_results(results, db, collection_name="user_candidate_test"):
+def save_results(results, db, collection_name="user_candidate"):
     """
-    최종 candidate generation 결과를 MongoDB에 저장.
+    최종 candidate generation 결과를 MongoDB user_candidate 컬렉션에 저장.
     """
     logger.info(f"Saving {len(results)} user candidate results to MongoDB collection '{collection_name}'...")
     start_time = pd.Timestamp.now()
@@ -260,14 +260,27 @@ def save_results(results, db, collection_name="user_candidate_test"):
         target_collection = db[collection_name]
         from pymongo import UpdateOne
         operations = []
+        
         for res in results:
-            user_id = res.get('user_id')
-            candidates = res.get('candidates', [])
-            filter_query = {'user_id': user_id}
-            # user_candidate 스키마에 맞게 저장 필요
-            # 예: update_doc = {'$set': {'cust_no': int(user_id), 'curation_list': {cand: 1.0 for cand in candidates}, 'last_updated': pd.Timestamp.now()}}
-            update_doc = {'$set': {'candidates': candidates, 'last_updated': pd.Timestamp.now()}} # 단순 저장 예시
+            cust_no = res.get('cust_no')
+            curation_list = res.get('curation_list', [])
+            
+            if not cust_no:
+                logger.warning("Skipping result without cust_no")
+                continue
+                
+            filter_query = {'cust_no': cust_no}
+            update_doc = {
+                '$set': {
+                    'curation_list': curation_list,
+                    'modi_dt': pd.Timestamp.now()
+                },
+                '$setOnInsert': {
+                    'create_dt': pd.Timestamp.now()
+                }
+            }
             operations.append(UpdateOne(filter_query, update_doc, upsert=True))
+            
         if operations:
             result = target_collection.bulk_write(operations)
             duration = (pd.Timestamp.now() - start_time).total_seconds()
@@ -280,8 +293,8 @@ def save_results(results, db, collection_name="user_candidate_test"):
         try:
             import json
             fallback_file = f"candidate_results_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json"
-            with open(fallback_file, 'w') as f:
-                json.dump(results, f, indent=2)
+            with open(fallback_file, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2, ensure_ascii=False, default=str)
             logger.info(f"Successfully saved results to fallback file: {fallback_file}")
         except Exception as backup_e:
             logger.error(f"Failed to save results to fallback file: {backup_e}")

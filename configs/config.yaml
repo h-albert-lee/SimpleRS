@@ -1,6 +1,6 @@
 # simplers/configs/config.yaml
 mongodb:
-  uri: "mongodb://localhost:27017" # 실제 MongoDB URI
+  uri: "mongodb://10.196.18.3:27017" # 실제 MongoDB URI
   db_name: "your_database_name"    # 실제 DB 이름
   # options:
   #   maxPoolSize: 200
@@ -18,20 +18,12 @@ api_security:
 oracledb:
   user: "your_oracle_user"
   password: "your_oracle_password"
-  # DSN 방식 예시 (host, port, service_name 포함)
   dsn: "your_oracle_host:1521/your_service_name"
-  # 또는 개별 파라미터 방식
-  # host: "your_oracle_host"
-  # port: 1521
-  # service_name: "your_service_name" # 또는 sid: "your_oracle_sid"
-  encoding: "UTF-8" # 필요시 인코딩 지정
-  # --- Connection Pool 설정 (선택 사항) ---
-  pool_min: 2  # 최소 풀 사이즈
-  pool_max: 10 # 최대 풀 사이즈
-  pool_increment: 1 # 증가 단위
-  pool_timeout: 60 # 풀에서 연결 대기 시간 (초)
-  # Oracle Client 초기화 필요시 (Thick 모드) - 경로 지정
-  # client_lib_dir: "/path/to/your/instantclient_XX_Y"
+  encoding: "UTF-8"
+  pool_min: 2
+  pool_max: 10
+  pool_increment: 1
+  pool_timeout: 60
 
 
 # --- 배치 스코어링 설정 추가 ---

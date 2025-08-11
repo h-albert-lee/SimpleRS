@@ -84,3 +84,93 @@ def load_user_interactions(db: Any, user_ids: List[str], days_limit: int = 30) -
     return interactions
 
 # 다른 데이터 로더 함수들 추가 가능 (예: fetch_stock_metadata)
+
+def fetch_user_portfolio(customer_no: str, api_base_url: str = "http://172.17.4.53:8150") -> Dict[str, Any]:
+    """
+    사용자 포트폴리오 정보를 외부 API에서 가져옵니다.
+    
+    Args:
+        customer_no: 고객번호
+        api_base_url: API 서버 기본 URL
+        
+    Returns:
+        포트폴리오 정보 딕셔너리
+    """
+    import requests
+    
+    logger.debug(f"Fetching portfolio for customer: {customer_no}")
+    
+    try:
+        url = f"{api_base_url}/api/mu800"
+        payload = {
+            "customer_no": customer_no,
+            "target_type": ["stock", "sector"],
+            "top_n": 50  # 충분한 수의 종목 정보 가져오기
+        }
+        
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        logger.debug(f"Successfully fetched portfolio for customer {customer_no}")
+        return data
+        
+    except Exception as e:
+        logger.error(f"Error fetching portfolio for customer {customer_no}: {e}")
+        return {}
+
+def fetch_latest_stock_data(os_client, days_back: int = 1) -> List[Dict[str, Any]]:
+    """
+    OpenSearch에서 최신 주식 시세 데이터를 가져옵니다.
+    
+    Args:
+        os_client: OpenSearch 클라이언트
+        days_back: 며칠 전까지 데이터를 조회할지
+        
+    Returns:
+        주식 시세 데이터 리스트
+    """
+    logger.info("Fetching latest stock data from OpenSearch...")
+    
+    stock_data = []
+    
+    # 최근 며칠간의 인덱스에서 데이터 조회
+    for i in range(days_back):
+        date = (datetime.now() - timedelta(days=i)).strftime('%Y%m%d')
+        index_name = f"screen-{date}"
+        
+        try:
+            response = os_client.search(
+                index=index_name,
+                size=1000,  # 충분한 수의 데이터 조회
+                _source=["shrt_code", "country", "1d_returns", "close_price", "volume"],
+                body={
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"exists": {"field": "1d_returns"}},
+                                {"terms": {"country": ["Korea", "USA"]}}
+                            ]
+                        }
+                    },
+                    "sort": [{"1d_returns": {"order": "desc", "missing": "_last"}}]
+                },
+                ignore=[404]
+            )
+            
+            hits = response.get('hits', {}).get('hits', [])
+            for hit in hits:
+                source = hit.get('_source', {})
+                if source.get('shrt_code') and source.get('1d_returns') is not None:
+                    stock_data.append(source)
+                    
+            if hits:
+                logger.debug(f"Found {len(hits)} stock records in index {index_name}")
+                break  # 데이터를 찾으면 더 이전 날짜는 조회하지 않음
+                
+        except Exception as e:
+            logger.warning(f"Error querying index {index_name}: {e}")
+            continue
+    
+    logger.info(f"Fetched {len(stock_data)} stock records from OpenSearch")
+    return stock_data

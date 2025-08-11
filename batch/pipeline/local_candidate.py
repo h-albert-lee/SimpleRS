@@ -5,8 +5,7 @@ from typing import List, Dict, Any, Set
 
 # --- 규칙 클래스 직접 임포트 ---
 from batch.rules.local_rules import (
-    LocalOwnedStockLabelRule, LocalSectorThemeContentRule, # 순차 예시
-    LocalMarketContentRule, LocalRelatedContentRule, LocalOnboardingInterestRule # 병렬 예시
+    LocalMarketContentRule, LocalOwnedStockContentRule, LocalSectorContentRule
 )
 
 logger = logging.getLogger(__name__)
@@ -22,8 +21,7 @@ def compute_local_candidates(user: Dict[str, Any], context: Dict[str, Any]) -> L
 
     # --- 1. 순차 실행이 필요한 규칙들 ---
     sequential_rules = [
-        LocalOwnedStockLabelRule(),
-        LocalSectorThemeContentRule(),
+        # 순차 실행이 필요한 규칙이 있다면 여기에 추가
     ]
 
     if sequential_rules:
@@ -49,8 +47,8 @@ def compute_local_candidates(user: Dict[str, Any], context: Dict[str, Any]) -> L
     # --- 2. 병렬 실행이 가능한 규칙들 ---
     parallel_rules = [
         LocalMarketContentRule(),
-        LocalRelatedContentRule(),
-        LocalOnboardingInterestRule(),
+        LocalOwnedStockContentRule(),
+        LocalSectorContentRule(),
     ]
 
     if not parallel_rules:
