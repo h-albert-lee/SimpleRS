@@ -2,7 +2,7 @@
 import logging
 from typing import List, Dict, Any
 from .base import BaseLocalRule
-from batch.utils.data_loader import fetch_user_portfolio
+from batch.utils.data_loader import fetch_user_portfolio, APIConnectionError, DataValidationError
 
 # --- 레지스트리 및 데코레이터 정의 (유지) ---
 LOCAL_RULE_REGISTRY = {}
@@ -15,25 +15,53 @@ def register_local_rule(rule_name):
 
 logger = logging.getLogger(__name__)
 
+class LocalRuleError(Exception):
+    """로컬 룰 관련 예외"""
+    pass
+
 # Local Rule 1: 대주제(btopic)가 '시장' 인 컨텐츠
 @register_local_rule("local_market_content")
 class LocalMarketContentRule(BaseLocalRule):
     rule_name = "LocalMarketContentRule"
 
     def apply(self, user: Dict[str, Any], context: Dict[str, Any]) -> List[str]:
+        """
+        btopic이 '시장'인 컨텐츠를 반환합니다.
+        
+        Args:
+            user: 사용자 정보
+            context: 실행 컨텍스트
+            
+        Returns:
+            후보 컨텐츠 ID 리스트
+        """
         user_id = user.get('cust_no', 'UNKNOWN')
         logger.debug(f"[{user_id}] Applying rule: {self.rule_name}")
+        
+        # 입력 검증
         contents_list = context.get('contents_list', [])
         if not contents_list:
+            logger.warning(f"[{user_id}] {self.rule_name}: No contents available in context")
             return []
 
         try:
-            # 'btopic' 필드가 '시장'인 콘텐츠만 필터링
-            candidates = [c.get("_id") or c.get("id") for c in contents_list if c.get("btopic") == "시장"]
-            logger.info(f"[{user_id}] {self.rule_name}: Found {len(candidates)} candidates.")
+            # 유효한 컨텐츠만 필터링
+            candidates = []
+            for content in contents_list:
+                if not isinstance(content, dict):
+                    continue
+                    
+                btopic = content.get("btopic")
+                content_id = content.get("_id") or content.get("id")
+                
+                if btopic == "시장" and content_id:
+                    candidates.append(str(content_id))
+            
+            logger.info(f"[{user_id}] {self.rule_name}: Found {len(candidates)} market-related candidates")
             return candidates
+            
         except Exception as e:
-            logger.error(f"[{user_id}] {self.rule_name}: Error: {e}", exc_info=True)
+            logger.error(f"[{user_id}] {self.rule_name}: Unexpected error: {e}", exc_info=True)
             return []
 
 # Local Rule 2: 사용자가 실제 보유한 종목에 대한 콘텐츠
@@ -42,43 +70,100 @@ class LocalOwnedStockContentRule(BaseLocalRule):
     rule_name = "LocalOwnedStockContentRule"
 
     def apply(self, user: Dict[str, Any], context: Dict[str, Any]) -> List[str]:
+        """
+        사용자가 실제 보유한 종목에 대한 컨텐츠를 반환합니다.
+        
+        Args:
+            user: 사용자 정보
+            context: 실행 컨텍스트
+            
+        Returns:
+            후보 컨텐츠 ID 리스트
+        """
         user_id = user.get('cust_no', 'UNKNOWN')
         logger.debug(f"[{user_id}] Applying rule: {self.rule_name}")
-        contents_list = context.get('contents_list', [])
         
-        # 사용자 포트폴리오 정보 조회
+        # 입력 검증
+        contents_list = context.get('contents_list', [])
+        if not contents_list:
+            logger.warning(f"[{user_id}] {self.rule_name}: No contents available in context")
+            return []
+        
+        if not user_id or user_id == 'UNKNOWN':
+            logger.warning(f"{self.rule_name}: Invalid user ID")
+            return []
+        
         try:
+            # 사용자 포트폴리오 정보 조회
+            logger.debug(f"[{user_id}] {self.rule_name}: Fetching user portfolio...")
             portfolio_data = fetch_user_portfolio(user_id)
-            if not portfolio_data or not portfolio_data.get('portfolio_info'):
-                logger.debug(f"[{user_id}] {self.rule_name}: No portfolio data available.")
+            
+            if not portfolio_data:
+                logger.debug(f"[{user_id}] {self.rule_name}: No portfolio data available")
                 return []
             
-            # 보유 종목 코드 추출 (gic_code에서 종목 코드 부분만 추출)
-            owned_stock_codes = set()
-            for item in portfolio_data['portfolio_info']:
-                if item.get('kor_name') and item.get('kor_name') != '기타':
-                    # 종목명을 기반으로 매칭하거나, 별도 매핑 테이블 필요
-                    # 여기서는 간단히 종목명으로 매칭한다고 가정
-                    owned_stock_codes.add(item.get('kor_name'))
+            # 포트폴리오 데이터 검증
+            portfolio_info = portfolio_data.get('portfolio_info', [])
+            if not isinstance(portfolio_info, list):
+                logger.warning(f"[{user_id}] {self.rule_name}: Invalid portfolio_info format")
+                return []
             
-            if not owned_stock_codes:
-                logger.debug(f"[{user_id}] {self.rule_name}: No owned stocks found.")
+            # 보유 종목 코드 추출
+            owned_stock_codes = set()
+            owned_stock_names = set()
+            
+            for item in portfolio_info:
+                if not isinstance(item, dict):
+                    continue
+                    
+                kor_name = item.get('kor_name')
+                gic_code = item.get('gic_code')
+                
+                if kor_name and kor_name != '기타':
+                    owned_stock_names.add(kor_name)
+                    
+                if gic_code:
+                    owned_stock_codes.add(str(gic_code))
+            
+            if not owned_stock_codes and not owned_stock_names:
+                logger.debug(f"[{user_id}] {self.rule_name}: No valid owned stocks found")
                 return []
                 
-            logger.debug(f"[{user_id}] {self.rule_name}: User owned stocks: {owned_stock_codes}")
+            logger.debug(f"[{user_id}] {self.rule_name}: Found {len(owned_stock_codes)} stock codes, "
+                        f"{len(owned_stock_names)} stock names")
 
-            # 콘텐츠의 'stk_name' 또는 'label' 필드가 보유 종목에 있는지 확인
+            # 콘텐츠 매칭
             candidates = []
-            for c in contents_list:
-                if (c.get("stk_name") in owned_stock_codes or 
-                    c.get("label") in owned_stock_codes):
-                    candidates.append(c.get("_id") or c.get("id"))
+            for content in contents_list:
+                if not isinstance(content, dict):
+                    continue
                     
-            logger.info(f"[{user_id}] {self.rule_name}: Found {len(candidates)} candidates.")
+                content_id = content.get("_id") or content.get("id")
+                if not content_id:
+                    continue
+                    
+                # 여러 필드로 매칭 시도
+                stk_name = content.get("stk_name")
+                label = content.get("label")
+                
+                matched = False
+                if stk_name in owned_stock_names:
+                    matched = True
+                elif label in owned_stock_codes or label in owned_stock_names:
+                    matched = True
+                    
+                if matched:
+                    candidates.append(str(content_id))
+                    
+            logger.info(f"[{user_id}] {self.rule_name}: Found {len(candidates)} owned stock candidates")
             return candidates
             
+        except (APIConnectionError, DataValidationError) as e:
+            logger.warning(f"[{user_id}] {self.rule_name}: External API error: {e}")
+            return []
+            
         except Exception as e:
-            logger.error(f"[{user_id}] {self.rule_name}: Error: {e}", exc_info=True)
+            logger.error(f"[{user_id}] {self.rule_name}: Unexpected error: {e}", exc_info=True)
             return []
 
 # Local Rule 3: 보유종목의 섹터에 대한 컨텐츠
@@ -87,36 +172,95 @@ class LocalSectorContentRule(BaseLocalRule):
     rule_name = "LocalSectorContentRule"
 
     def apply(self, user: Dict[str, Any], context: Dict[str, Any]) -> List[str]:
+        """
+        사용자가 보유한 종목의 섹터에 대한 컨텐츠를 반환합니다.
+        
+        Args:
+            user: 사용자 정보
+            context: 실행 컨텍스트
+            
+        Returns:
+            후보 컨텐츠 ID 리스트
+        """
         user_id = user.get('cust_no', 'UNKNOWN')
         logger.debug(f"[{user_id}] Applying rule: {self.rule_name}")
-        contents_list = context.get('contents_list', [])
         
-        # 사용자 포트폴리오 정보 조회
+        # 입력 검증
+        contents_list = context.get('contents_list', [])
+        if not contents_list:
+            logger.warning(f"[{user_id}] {self.rule_name}: No contents available in context")
+            return []
+        
+        if not user_id or user_id == 'UNKNOWN':
+            logger.warning(f"{self.rule_name}: Invalid user ID")
+            return []
+        
         try:
+            # 사용자 포트폴리오 정보 조회
+            logger.debug(f"[{user_id}] {self.rule_name}: Fetching user portfolio for sector analysis...")
             portfolio_data = fetch_user_portfolio(user_id)
-            if not portfolio_data or not portfolio_data.get('sector_weight'):
-                logger.debug(f"[{user_id}] {self.rule_name}: No sector weight data available.")
+            
+            if not portfolio_data:
+                logger.debug(f"[{user_id}] {self.rule_name}: No portfolio data available")
                 return []
             
-            # 사용자가 보유한 섹터 정보 추출
-            user_sectors = set(portfolio_data['sector_weight'].keys())
+            # 섹터 정보 추출
+            user_sectors = set()
+            
+            # sector_weight에서 섹터 정보 추출
+            sector_weight = portfolio_data.get('sector_weight', {})
+            if isinstance(sector_weight, dict):
+                user_sectors.update(sector_weight.keys())
+            
+            # portfolio_info에서도 섹터 정보 추출 (있다면)
+            portfolio_info = portfolio_data.get('portfolio_info', [])
+            if isinstance(portfolio_info, list):
+                for item in portfolio_info:
+                    if isinstance(item, dict):
+                        sector = item.get('sector') or item.get('gics_sector')
+                        if sector:
+                            user_sectors.add(sector)
+            
             if not user_sectors:
-                logger.debug(f"[{user_id}] {self.rule_name}: No sectors found in portfolio.")
+                logger.debug(f"[{user_id}] {self.rule_name}: No sectors found in portfolio")
                 return []
                 
-            logger.debug(f"[{user_id}] {self.rule_name}: User sectors: {user_sectors}")
+            logger.debug(f"[{user_id}] {self.rule_name}: User sectors: {list(user_sectors)}")
 
-            # 콘텐츠의 btopic이나 stopic이 사용자 섹터와 매칭되는 컨텐츠 찾기
+            # 콘텐츠 매칭
             candidates = []
-            for c in contents_list:
-                if (c.get("btopic") in user_sectors or 
-                    c.get("stopic") in user_sectors):
-                    candidates.append(c.get("_id") or c.get("id"))
+            for content in contents_list:
+                if not isinstance(content, dict):
+                    continue
                     
-            logger.info(f"[{user_id}] {self.rule_name}: Found {len(candidates)} candidates.")
+                content_id = content.get("_id") or content.get("id")
+                if not content_id:
+                    continue
+                    
+                # 여러 필드로 섹터 매칭 시도
+                btopic = content.get("btopic")
+                stopic = content.get("stopic")
+                sector = content.get("sector")
+                
+                matched = False
+                if btopic in user_sectors:
+                    matched = True
+                elif stopic in user_sectors:
+                    matched = True
+                elif sector in user_sectors:
+                    matched = True
+                    
+                if matched:
+                    candidates.append(str(content_id))
+                    
+            logger.info(f"[{user_id}] {self.rule_name}: Found {len(candidates)} sector-related candidates")
             return candidates
             
+        except (APIConnectionError, DataValidationError) as e:
+            logger.warning(f"[{user_id}] {self.rule_name}: External API error: {e}")
+            return []
+            
         except Exception as e:
-            logger.error(f"[{user_id}] {self.rule_name}: Error: {e}", exc_info=True)
+            logger.error(f"[{user_id}] {self.rule_name}: Unexpected error: {e}", exc_info=True)
             return []
 
