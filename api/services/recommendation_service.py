@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from bson import ObjectId # MongoDB ObjectId 사용 시 필요
 from opensearchpy.exceptions import NotFoundError # OpenSearch 에러 처리용
 import random # random 임포트 추가
+import aiohttp
+from common.config import config
 
 # rules 및 db_clients 임포트 (경로 확인 필요)
 from api.rules import PRE_RANKING_RULES, POST_RANKING_RULES
@@ -108,22 +110,50 @@ async def fetch_seen_items(cust_no: int, os_client) -> Set[str]:
     return seen_items_set
 
 async def fetch_user_stock_lists(cust_no: int) -> Dict[str, Set[str]]:
-    """사용자 관련 주식 목록 로드 (!!! 현재 Dummy 구현 !!!)"""
-    # !!! 중요: 이 부분은 실제 DB 또는 캐시 조회 로직으로 반드시 대체되어야 합니다 !!!
+    """MU800 API를 통해 사용자의 보유 종목 목록을 조회"""
     log_prefix = f"[cust_no={cust_no}]"
-    logger.warning(f"{log_prefix} Fetching user stock lists using DUMMY data!")
+    logger.debug(f"{log_prefix} Fetching user stock lists from MU800 API...")
     start_time = time.perf_counter()
-    await asyncio.sleep(0.001) # 임시 지연
-    # 실제로는 DB 조회 후 Set으로 변환 필요
-    data = {
-        "owned_stocks_set": {"005930", "035720"}, # 예시: 삼성전자, 카카오
-        "recent_stocks_set": {"000660"},          # 예시: SK하이닉스
-        "group1_stocks_set": {"005380"},          # 예시: 현대차
-        "onboarding_stocks_set": {"005930"}       # 예시: 삼성전자
+    owned_stocks: Set[str] = set()
+
+    module_cfg = config.get("module_server", {})
+    base_url = module_cfg.get("base_url", "http://172.17.4.53:8150")
+    url = f"{base_url}/api/mu800"
+    payload = {
+        "customer_no": str(cust_no),
+        "target_type": ["stock"],
+        "top_n": 50,
     }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=1.0)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload) as resp:
+                if resp.status != 200:
+                    logger.warning(f"{log_prefix} MU800 API returned status {resp.status}")
+                else:
+                    data = await resp.json()
+                    portfolio_info = data.get("portfolio_info", [])
+                    if isinstance(portfolio_info, list):
+                        for item in portfolio_info:
+                            if isinstance(item, dict):
+                                code = item.get("gic_code") or item.get("shrt_code") or item.get("stock_code")
+                                if code and str(code) != "기타":
+                                    owned_stocks.add(str(code))
+    except asyncio.TimeoutError:
+        logger.warning(f"{log_prefix} Timeout calling MU800 API")
+    except Exception as e:
+        logger.error(f"{log_prefix} Error fetching user stock lists: {e}", exc_info=True)
+
     duration_ms = (time.perf_counter() - start_time) * 1000
-    logger.debug(f"{log_prefix} Dummy user stock lists fetch took {duration_ms:.2f}ms")
-    return data
+    logger.debug(f"{log_prefix} User stock list fetch took {duration_ms:.2f}ms and found {len(owned_stocks)} stocks")
+
+    return {
+        "owned_stocks_set": owned_stocks,
+        "recent_stocks_set": set(),
+        "group1_stocks_set": set(),
+        "onboarding_stocks_set": set(),
+    }
 
 async def fetch_owned_stock_returns(owned_stocks: Set[str], os_client) -> Dict[str, Dict[str, Optional[float]]]:
     """보유 주식 수익률 정보 로드 (OpenSearch screen-* 조회, 캐싱 권장)"""
@@ -261,7 +291,7 @@ async def fetch_user_context_data(cust_no: int) -> Dict[str, Any]:
     tasks = {
         "profile": fetch_user_profile_data(cust_no, db),
         "seen": fetch_seen_items(cust_no, os_client),
-        "stocks": fetch_user_stock_lists(cust_no), # Dummy 사용 중
+        "stocks": fetch_user_stock_lists(cust_no),
     }
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
 
