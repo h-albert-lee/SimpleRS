@@ -7,6 +7,8 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 import pandas as pd
 import dask.dataframe as dd
+import dask.bag as dbag
+from datetime import datetime
 
 from batch.utils.config_loader import MONGO_CONFIG
 from common.db import (
@@ -74,44 +76,65 @@ def mongodb_connection_context():
 
 # Data loading functions
 
-def load_contents(db) -> dd.DataFrame:
-    """Load content data from MongoDB 'curation' collection into a Dask DataFrame."""
-    logger.info("Loading contents from MongoDB 'curation' collection...")
+def load_contents(db, query: Dict[str, Any] | None = None, partition_size: int = 1000) -> dd.DataFrame:
+    """Load content data from MongoDB 'curation' collection into a Dask DataFrame.
+
+    This implementation streams data directly from the MongoDB cursor without
+    materialising the entire result set in memory. The optional ``query``
+    parameter allows callers to limit the data fetched from MongoDB.
+    """
+    logger.info("Loading contents from MongoDB 'curation' collection via streaming cursor...")
     start_time = pd.Timestamp.now()
     try:
         curation_coll = db['curation']
-        contents_cursor = curation_coll.find()
-        contents_list = list(contents_cursor)
-        for content in contents_list:
-            content['id'] = str(content.get('_id'))
-        contents_pd = pd.DataFrame(contents_list)
-        mem_usage = contents_pd.memory_usage(deep=True).sum() / (1024**2)
-        logger.info(f"Loaded {len(contents_pd)} contents into Pandas DataFrame ({mem_usage:.2f} MB). Converting to Dask DataFrame.")
+        contents_cursor = curation_coll.find(query or {}, batch_size=partition_size)
+
+        def _prepare(doc: Dict[str, Any]) -> Dict[str, Any]:
+            doc = dict(doc)
+            doc['id'] = str(doc.get('_id'))
+            return doc
+
+        bag = dbag.from_sequence(contents_cursor, partition_size=partition_size).map(_prepare)
+        ddf = bag.to_dataframe()
         duration = (pd.Timestamp.now() - start_time).total_seconds()
-        logger.info(f"Contents loading took {duration:.2f} seconds.")
-        return dd.from_pandas(contents_pd, npartitions=4)
+        logger.info(f"Created Dask DataFrame for contents in {duration:.2f} seconds.")
+        return ddf
     except Exception as e:
         logger.error(f"Error loading contents: {e}", exc_info=True)
         raise
 
 
-def load_users(db) -> dd.DataFrame:
-    """Load user data from MongoDB 'user' collection into a Dask DataFrame."""
-    logger.info("Loading users from MongoDB 'user' collection...")
+def load_users(
+    db,
+    last_login_after: datetime | None = None,
+    partition_size: int = 1000,
+) -> dd.DataFrame:
+    """Load user data from MongoDB 'user' collection into a Dask DataFrame.
+
+    The function streams user documents in chunks. If ``last_login_after`` is
+    provided, only users whose ``last_login_dt`` is greater than or equal to the
+    given datetime are fetched.
+    """
+    logger.info("Loading users from MongoDB 'user' collection via streaming cursor...")
     start_time = pd.Timestamp.now()
     try:
         user_coll = db['user']
-        users_cursor = user_coll.find()
-        users_list = list(users_cursor)
-        for user in users_list:
+        query: Dict[str, Any] = {}
+        if last_login_after is not None:
+            query['last_login_dt'] = {'$gte': last_login_after}
+        users_cursor = user_coll.find(query, batch_size=partition_size)
+
+        def _prepare(user: Dict[str, Any]) -> Dict[str, Any]:
+            user = dict(user)
             user['id'] = str(user.get('_id'))
             user.setdefault('owned_stocks', [])
-        users_pd = pd.DataFrame(users_list)
-        mem_usage = users_pd.memory_usage(deep=True).sum() / (1024**2)
-        logger.info(f"Loaded {len(users_pd)} users into Pandas DataFrame ({mem_usage:.2f} MB). Converting to Dask DataFrame.")
+            return user
+
+        bag = dbag.from_sequence(users_cursor, partition_size=partition_size).map(_prepare)
+        ddf = bag.to_dataframe()
         duration = (pd.Timestamp.now() - start_time).total_seconds()
-        logger.info(f"Users loading took {duration:.2f} seconds.")
-        return dd.from_pandas(users_pd, npartitions=4)
+        logger.info(f"Created Dask DataFrame for users in {duration:.2f} seconds.")
+        return ddf
     except Exception as e:
         logger.error(f"Error loading users: {e}", exc_info=True)
         raise

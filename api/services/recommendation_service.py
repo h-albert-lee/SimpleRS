@@ -27,8 +27,7 @@ async def fetch_user_profile_data(cust_no: int, db) -> Dict[str, Any]:
     start_time = time.perf_counter()
     user_profile = {}
     try:
-        # CUST_NO 필드명 확인 필요
-        user_profile_doc = await db.user.find_one({"CUST_NO": cust_no})
+        user_profile_doc = await db.user.find_one({"cust_no": cust_no})
         if user_profile_doc:
              # ObjectId 등 BSON 타입을 JSON 호환 가능하게 변환 (필요시)
              if '_id' in user_profile_doc:
@@ -53,48 +52,59 @@ async def fetch_seen_items(cust_no: int, os_client) -> Set[str]:
     log_prefix = f"[cust_no={cust_no}]"
     logger.debug(f"{log_prefix} Fetching seen items from OpenSearch...")
     start_time = time.perf_counter()
-    seen_items_set = set()
-    # 성능을 위해 최근 N일치만 조회하거나 캐싱 사용 필수
-    # 여기서는 예시로 최근 3일치만 조회
+    seen_items_set: Set[str] = set()
     days_to_check = 3
-    tasks = []
 
-    # 최근 N일 인덱스 병렬 조회
+    async def _fetch_index(index_name: str) -> Set[str]:
+        index_seen: Set[str] = set()
+        search_after = None
+        while True:
+            body = {"query": {"term": {"cust_no": cust_no}}, "sort": [{"@timestamp": "asc"}]}
+            if search_after is not None:
+                body["search_after"] = search_after
+            try:
+                resp = await os_client.search(
+                    index=index_name,
+                    size=500,
+                    _source=["curation_id"],
+                    body=body,
+                    ignore=[404],
+                    request_timeout=0.5,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"{log_prefix} Timeout fetching seen items from {index_name}.")
+                break
+            except NotFoundError:
+                break
+            except Exception as e:
+                logger.warning(f"{log_prefix} Failed to fetch seen items from {index_name}: {e}")
+                break
+
+            hits = resp.get("hits", {}).get("hits", [])
+            if not hits:
+                break
+            for hit in hits:
+                cid = hit.get("_source", {}).get("curation_id")
+                if cid:
+                    index_seen.add(cid)
+            if len(hits) < 500:
+                break
+            search_after = hits[-1].get("sort")
+        return index_seen
+
+    tasks = []
     for i in range(days_to_check):
         target_date = (datetime.utcnow() - timedelta(days=i)).strftime('%Y%m%d')
-        index_name = f"curation-logs-{target_date}" # 인덱스 패턴 확인!
-        tasks.append(
-            os_client.search(
-                index=index_name,
-                size=500, # 하루 최대 조회 수 (조정 필요)
-                _source=["curation_id"],
-                body={"query": {"term": {"cust_no": cust_no}}}, # cust_no 필드명 확인!
-                ignore=[404], # 인덱스 없어도 에러 아님
-                request_timeout=0.5 # 짧은 타임아웃
-            )
-        )
+        tasks.append(_fetch_index(f"curation-logs-{target_date}"))
 
-    # 병렬 실행 및 결과 처리
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for result in results:
-        if isinstance(result, Exception):
-            # 타임아웃 또는 기타 에러 로깅
-            if isinstance(result, asyncio.TimeoutError):
-                 logger.warning(f"{log_prefix} Timeout fetching seen items from an index.")
-            elif not isinstance(result, NotFoundError): # NotFoundError는 예상 가능하므로 로깅 안 함
-                 logger.warning(f"{log_prefix} Failed to fetch seen items from an index: {result}", exc_info=result)
-            continue # 에러 발생 시 해당 인덱스는 건너뜀
-
-        # 성공 시 결과 처리
-        for hit in result.get('hits', {}).get('hits', []):
-            if '_source' in hit and 'curation_id' in hit['_source']:
-                curation_id_val = hit['_source']['curation_id']
-                if curation_id_val: # Null이나 빈 문자열 제외
-                    seen_items_set.add(curation_id_val)
+    results = await asyncio.gather(*tasks)
+    for res in results:
+        seen_items_set.update(res)
 
     duration_ms = (time.perf_counter() - start_time) * 1000
-    logger.debug(f"{log_prefix} Found {len(seen_items_set)} seen items in {duration_ms:.2f}ms (from OpenSearch over {days_to_check} indices).")
+    logger.debug(
+        f"{log_prefix} Found {len(seen_items_set)} seen items in {duration_ms:.2f}ms (over {days_to_check} indices)."
+    )
     return seen_items_set
 
 async def fetch_user_stock_lists(cust_no: int) -> Dict[str, Set[str]]:
@@ -300,15 +310,21 @@ async def fetch_initial_candidates_with_scores(cust_no: int, db) -> List[Tuple[s
         doc = await db.user_candidate.find_one(
             {"cust_no": cust_no}, {"curation_list": 1, "_id": 0}
         )
-        if doc and isinstance(doc.get("curation_list"), dict):
-            for item_id, score in doc["curation_list"].items():
+        if doc and isinstance(doc.get("curation_list"), list):
+            for item in doc["curation_list"]:
+                if not isinstance(item, dict):
+                    continue
+                item_id = item.get("curation_id")
+                score = item.get("score", 0)
+                if item_id is None:
+                    continue
                 try:
-                    candidates_with_scores.append((item_id, float(score)))
+                    candidates_with_scores.append((str(item_id), float(score)))
                 except (ValueError, TypeError):
                     logger.warning(
                         f"{log_prefix} Invalid score format for item {item_id}: {score}. Using 0.0."
                     )
-                    candidates_with_scores.append((item_id, 0.0))
+                    candidates_with_scores.append((str(item_id), 0.0))
         else:
             logger.warning(
                 f"{log_prefix} No initial candidates found in user_candidate or format invalid."
