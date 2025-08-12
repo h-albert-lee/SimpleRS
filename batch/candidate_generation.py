@@ -18,6 +18,7 @@ from batch.utils.db_manager import (
 )
 # 로깅 설정
 from batch.utils.logging_setup import setup_logging
+from batch.utils.config_loader import MAX_CANDIDATES_PER_USER
 # 파이프라인 함수
 from batch.pipeline.global_candidate import compute_global_candidates
 from batch.pipeline.final_candidate import generate_candidate_for_user
@@ -153,7 +154,7 @@ def main():
                 'mongo_db': db,
                 'os_client': os_client,
                 'oracle_pool': oracle_pool,
-                'max_candidates_per_user': 100,
+                'max_candidates_per_user': MAX_CANDIDATES_PER_USER,
             }
             logger.info("Base context created successfully.")
         except Exception as e:

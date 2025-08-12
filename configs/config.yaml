@@ -32,6 +32,7 @@ batch_scoring:
     global: 0.3   # 예시 가중치 조정
     cluster: 0.5  # 예시 가중치 조정
     local: 1.0    # 예시 가중치 조정
+    other: 0.2    # 기타 후보 가중치
   cf_weight: 0.6      # CF 점수 가중치 (예시)
   cb_weight: 0.4      # CB 점수 가중치 (예시)
   min_score_threshold: 0.01 # 최종 점수 임계값 (예시)
@@ -43,3 +44,14 @@ batch_scoring:
   cf_item_similarity_metric: "jaccard" # 또는 "cosine"
   cf_user_history_limit: 100 # 아이템 추천 시 참고할 사용자 최근 상호작용 수
   cf_min_co_occurrence: 2 # 아이템 유사도 계산 시 최소 동시 등장 횟수 (Jaccard/Cosine 용)
+
+# --- 룰 설정 ---
+rules:
+  global_stock_top_return:
+    top_n: 10
+    allowed_countries: ["Korea", "USA"]
+    days_back: 3
+    max_abs_return: 50
+  global_top_liked_content:
+    default_top_n: 50
+    max_top_n: 1000

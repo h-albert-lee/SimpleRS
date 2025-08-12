@@ -1,9 +1,12 @@
 # simplers/batch/rules/global_rules.py
 import logging
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
 from .base import BaseGlobalRule
 from batch.utils.data_loader import fetch_latest_stock_data, APIConnectionError, DataValidationError
+from batch.utils.config_loader import (
+    GLOBAL_STOCK_TOP_RETURN_CONFIG,
+    GLOBAL_TOP_LIKED_CONTENT_CONFIG,
+)
 
 # --- 레지스트리 및 데코레이터 정의 (유지) ---
 GLOBAL_RULE_REGISTRY = {}
@@ -39,13 +42,20 @@ class GlobalStockTopReturnRule(BaseGlobalRule):
             GlobalRuleError: 룰 실행 중 치명적 오류
         """
         logger.debug(f"Applying rule: {self.rule_name}")
-        
+
+        # 설정값 로딩
+        params = GLOBAL_STOCK_TOP_RETURN_CONFIG
+        top_n = params.get("top_n", 10)
+        allowed_countries = params.get("allowed_countries", ["Korea", "USA"])
+        days_back = params.get("days_back", 3)
+        max_abs_return = params.get("max_abs_return", 50)
+
         # 입력 검증
         contents_list = context.get('contents_list', [])
         if not contents_list:
             logger.warning(f"{self.rule_name}: No contents available in context")
             return []
-        
+
         os_client = context.get('os_client')
         if not os_client:
             logger.warning(f"{self.rule_name}: OpenSearch client not available in context")
@@ -54,7 +64,7 @@ class GlobalStockTopReturnRule(BaseGlobalRule):
         try:
             # 최신 주식 데이터 조회
             logger.debug(f"{self.rule_name}: Fetching latest stock data...")
-            stock_data = fetch_latest_stock_data(os_client, days_back=3)
+            stock_data = fetch_latest_stock_data(os_client, days_back=days_back)
             
             if not stock_data:
                 logger.warning(f"{self.rule_name}: No stock data available from OpenSearch")
@@ -69,16 +79,16 @@ class GlobalStockTopReturnRule(BaseGlobalRule):
                 country = stock.get("country")
                 returns = stock.get("1d_returns")
                 code = stock.get("shrt_code")
-                
-                if country not in ["Korea", "USA"]:
+
+                if country not in allowed_countries:
                     continue
-                    
+
                 if returns is None or code is None:
                     continue
                     
                 try:
                     returns_float = float(returns)
-                    if abs(returns_float) > 50:  # 비현실적인 수익률 제외
+                    if abs(returns_float) > max_abs_return:  # 비현실적인 수익률 제외
                         continue
                     stock['1d_returns_float'] = returns_float
                     valid_stocks.append(stock)
@@ -89,12 +99,14 @@ class GlobalStockTopReturnRule(BaseGlobalRule):
                 logger.warning(f"{self.rule_name}: No valid stock data after filtering")
                 return []
 
-            # 상승률 기준 정렬 및 top 10 선택
+            # 상승률 기준 정렬 및 상위 종목 선택
             sorted_stocks = sorted(valid_stocks, key=lambda s: s['1d_returns_float'], reverse=True)
-            top_stocks = sorted_stocks[:10]
-            
+            top_stocks = sorted_stocks[:top_n]
+
             top_stock_codes = {s.get("shrt_code") for s in top_stocks if s.get("shrt_code")}
-            logger.info(f"{self.rule_name}: Top 10 stock codes by 1d_returns: {list(top_stock_codes)}")
+            logger.info(
+                f"{self.rule_name}: Top {top_n} stock codes by 1d_returns: {list(top_stock_codes)}"
+            )
 
             # 콘텐츠 매칭
             candidate_ids = []
@@ -125,31 +137,40 @@ class GlobalStockTopReturnRule(BaseGlobalRule):
 class GlobalTopLikedContentRule(BaseGlobalRule):
     rule_name = "GlobalTopLikedContentRule"
 
-    def apply(self, context: Dict[str, Any], top_n: int = 50) -> List[str]:
+    def apply(self, context: Dict[str, Any], top_n: int = None) -> List[str]:
         """
         liked_users가 많은 컨텐츠를 반환합니다.
-        
+
         Args:
             context: 실행 컨텍스트
             top_n: 상위 몇 개까지 선택할지
-            
+
         Returns:
             후보 컨텐츠 ID 리스트
-            
+
         Raises:
             GlobalRuleError: 룰 실행 중 치명적 오류
         """
         logger.debug(f"Applying rule: {self.rule_name}")
-        
+
+        params = GLOBAL_TOP_LIKED_CONTENT_CONFIG
+        default_top_n = params.get("default_top_n", 50)
+        max_top_n = params.get("max_top_n", 1000)
+
         # 입력 검증
         contents_list = context.get('contents_list', [])
         if not contents_list:
             logger.warning(f"{self.rule_name}: No contents available in context")
             return []
-        
-        if top_n <= 0 or top_n > 1000:
-            logger.warning(f"{self.rule_name}: Invalid top_n value: {top_n}, using default 50")
-            top_n = 50
+
+        if top_n is None:
+            top_n = default_top_n
+
+        if top_n <= 0 or top_n > max_top_n:
+            logger.warning(
+                f"{self.rule_name}: Invalid top_n value: {top_n}, using default {default_top_n}"
+            )
+            top_n = default_top_n
 
         try:
             # 유효한 컨텐츠만 필터링
