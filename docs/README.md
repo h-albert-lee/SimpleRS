@@ -19,6 +19,7 @@ SimpleRS는 3-pool 아키텍처를 기반으로 한 추천시스템의 배치 �
 - **강화된 예외처리**: 외부 API 장애에 대한 graceful 처리
 - **배치 처리**: MongoDB 대량 저장을 위한 배치 처리
 - **모니터링**: 상세한 로깅 및 성능 메트릭
+- **협업 필터링**: 사용자 상호작용 기반 CF 점수와 소스 점수 결합
 
 ### 후보 풀 구성
 
@@ -49,6 +50,7 @@ SimpleRS/
 │       ├── config_loader.py        # 설정 로더
 │       ├── data_loader.py          # 데이터 로더 (API 연동)
 │       ├── db_manager.py           # 데이터베이스 관리
+│       ├── cf_utils.py             # 협업 필터링 유틸
 │       └── logging_setup.py        # 로깅 설정
 ├── configs/                        # 설정 파일
 │   └── config.yaml

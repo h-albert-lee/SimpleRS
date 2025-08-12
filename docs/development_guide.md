@@ -56,6 +56,7 @@ SimpleRS/
 │       ├── config_loader.py        # 설정 로더
 │       ├── data_loader.py          # 데이터 로더
 │       ├── db_manager.py           # DB 관리
+│       ├── cf_utils.py             # 협업 필터링 유틸
 │       └── logging_setup.py        # 로깅 설정
 ├── configs/                        # 설정 파일
 │   └── config.yaml
@@ -82,7 +83,14 @@ SimpleRS/
 외부 API와의 연동을 담당합니다.
 
 ```python
-from batch.utils.data_loader import fetch_user_portfolio, fetch_latest_stock_data
+from batch.utils.data_loader import (
+    fetch_user_portfolio,
+    fetch_latest_stock_data,
+    load_user_interactions,
+)
+
+# 사용자 상호작용 기록 로드
+user_interactions = load_user_interactions(db, ["USER123"], days_limit=30)
 
 # 사용자 포트폴리오 조회
 portfolio = fetch_user_portfolio("USER123")
@@ -92,6 +100,7 @@ stock_data = fetch_latest_stock_data(os_client, days_back=3)
 ```
 
 **주요 기능:**
+- 사용자 상호작용 데이터 로드
 - 포트폴리오 API 연동
 - OpenSearch 주식 데이터 조회
 - 강화된 예외 처리 및 재시도 로직
@@ -121,7 +130,31 @@ contents_ddf = load_contents(db)
 - 배치 저장 최적화
 - 폴백 메커니즘
 
-### 3. 룰 엔진 (rules/)
+### 3. 협업 필터링 유틸리티 (cf_utils.py)
+
+사용자 상호작용을 기반으로 아이템 간 유사도를 계산하고 CF 점수를 제공합니다.
+
+```python
+from batch.utils.cf_utils import (
+    build_item_similarity_matrix,
+    get_collaborative_filtering_scores,
+)
+
+# 유사도 매트릭스 구성
+similarity_matrix = build_item_similarity_matrix(user_interactions)
+
+# CF 점수 계산
+cf_scores = get_collaborative_filtering_scores(
+    user_history_item_ids, candidate_item_ids, similarity_matrix
+)
+```
+
+**주요 기능:**
+- 아이템 유사도 매트릭스 생성 (Jaccard/Cosine)
+- 사용자별 CF 점수 계산
+- 장애 격리와 폴백 처리
+
+### 4. 룰 엔진 (rules/)
 
 추천 로직을 모듈화한 룰 시스템입니다.
 
@@ -144,7 +177,7 @@ user_candidates = local_rule.apply(user, context)
 - 성능 모니터링
 - 확장 가능한 아키텍처
 
-### 4. 파이프라인 (pipeline/)
+### 5. 파이프라인 (pipeline/)
 
 후보 생성 파이프라인을 구현합니다.
 

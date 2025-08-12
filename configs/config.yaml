@@ -33,8 +33,8 @@ batch_scoring:
     cluster: 0.5  # 예시 가중치 조정
     local: 1.0    # 예시 가중치 조정
     other: 0.2    # 기타 후보 가중치
-  cf_weight: 0.6      # CF 점수 가중치 (예시)
-  cb_weight: 0.4      # CB 점수 가중치 (예시)
+  cf_weight: 0.6      # CF 점수 가중치 (0으로 설정 시 CF 비활성화)
+  cb_weight: 0.0      # (향후 확장용) CB 점수 가중치
   min_score_threshold: 0.01 # 최종 점수 임계값 (예시)
   max_candidates_per_user: 500 # 사용자별 최대 후보 수 (예시)
   # CB 관련 설정 (예시)

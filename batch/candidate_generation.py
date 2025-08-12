@@ -18,12 +18,17 @@ from batch.utils.db_manager import (
 )
 # 로깅 설정
 from batch.utils.logging_setup import setup_logging
-from batch.utils.config_loader import MAX_CANDIDATES_PER_USER
+from batch.utils.config_loader import MAX_CANDIDATES_PER_USER, CF_WEIGHT
 # 파이프라인 함수
 from batch.pipeline.global_candidate import compute_global_candidates
 from batch.pipeline.final_candidate import generate_candidate_for_user
-# 데이터 로더
-from batch.utils.data_loader import load_user_interactions, APIConnectionError, DataValidationError
+# 데이터 로더 및 CF 유틸
+from batch.utils.data_loader import (
+    load_user_interactions,
+    APIConnectionError,
+    DataValidationError,
+)
+from batch.utils.cf_utils import build_item_similarity_matrix
 
 # --- 로깅 설정 ---
 setup_logging()
@@ -155,11 +160,26 @@ def main():
                 'os_client': os_client,
                 'oracle_pool': oracle_pool,
                 'max_candidates_per_user': MAX_CANDIDATES_PER_USER,
+                'cf_weight': CF_WEIGHT,
+                'source_weight': 1.0,
             }
             logger.info("Base context created successfully.")
         except Exception as e:
             logger.error(f"Context creation failed: {e}")
             raise BatchProcessError(f"Failed to create base context: {e}")
+
+        # --- 사용자 상호작용 로드 및 아이템 유사도 계산 ---
+        try:
+            user_ids = users_pd['cust_no'].astype(str).tolist()
+            user_interactions = load_user_interactions(db, user_ids, os_client=os_client)
+            item_similarity_matrix = build_item_similarity_matrix(user_interactions, all_content_ids)
+        except Exception as e:
+            logger.warning(f"Failed to prepare CF data: {e}")
+            user_interactions = {}
+            item_similarity_matrix = None
+
+        base_context['user_interactions'] = user_interactions
+        base_context['item_similarity_matrix'] = item_similarity_matrix
 
         # --- 글로벌 후보 생성 ---
         logger.info("Generating global candidates...")
