@@ -6,33 +6,33 @@ import pandas as pd  # Timestamp 사용
 
 # 로컬 후보 생성 함수
 from batch.pipeline.local_candidate import compute_local_candidates
+from batch.utils.cf_utils import get_collaborative_filtering_scores
 from batch.utils.config_loader import SOURCE_WEIGHTS, MAX_CANDIDATES_PER_USER
 from batch.utils.enums import CandidateSource
 
 logger = logging.getLogger(__name__)
 
-def calculate_initial_scores(
+def calculate_final_scores(
     user: Dict[str, Any],
     context: Dict[str, Any],
     global_candidate_ids: Set[str],
     local_candidate_ids: Set[str],
     other_candidate_ids: Set[str]
 ) -> Dict[str, float]:
-    """
-    3개의 pool(global, local, other)에 대해 설정된 weight를 사용해 점수를 계산합니다.
-    """
+    """소스 기반 점수와 CF 점수를 결합하여 최종 점수를 계산합니다."""
     user_id = user.get('cust_no', 'UNKNOWN')
     log_prefix = f"[User: {user_id}] [Scoring]"
     logger.debug(f"{log_prefix} Calculating initial scores...")
 
-    all_candidate_ids = global_candidate_ids.union(local_candidate_ids).union(other_candidate_ids)
+    all_candidate_ids = (
+        global_candidate_ids.union(local_candidate_ids).union(other_candidate_ids)
+    )
     if not all_candidate_ids:
         logger.debug(f"{log_prefix} No candidates from any source.")
         return {}
 
-    final_scores = defaultdict(float)
-
-    # 각 pool별로 점수 부여
+    # 1. 소스 기반 점수 계산
+    source_scores = defaultdict(float)
     for item_id in all_candidate_ids:
         score = 0.0
         if item_id in global_candidate_ids:
@@ -41,20 +41,47 @@ def calculate_initial_scores(
             score += SOURCE_WEIGHTS.get(CandidateSource.LOCAL.value, 1.0)
         if item_id in other_candidate_ids:
             score += SOURCE_WEIGHTS.get(CandidateSource.OTHER.value, 1.0)
-        
         if score > 0:
-            final_scores[item_id] = score
+            source_scores[item_id] = score
+
+    # 2. CF 점수 계산 (장애 격리)
+    cf_scores: Dict[str, float] = {}
+    try:
+        user_history = context.get("user_interactions", {}).get(str(user.get("cust_no")), [])
+        similarity_matrix = context.get("item_similarity_matrix")
+        cf_scores = get_collaborative_filtering_scores(
+            user_history, all_candidate_ids, similarity_matrix
+        )
+    except Exception as e:
+        logger.warning(
+            f"{log_prefix} Failed to calculate CF scores: {e}"
+        )
+        cf_scores = {}
+
+    # 3. 최종 점수 결합
+    w_source = context.get("source_weight", 1.0)
+    w_cf = context.get("cf_weight", 0.0)
+
+    final_scores = defaultdict(float)
+    for item_id in all_candidate_ids:
+        final_scores[item_id] = (w_source * source_scores.get(item_id, 0.0)) + (
+            w_cf * cf_scores.get(item_id, 0.0)
+        )
 
     # 점수 내림차순으로 정렬하여 상위 N개 선택
-    max_candidates = context.get('max_candidates_per_user', MAX_CANDIDATES_PER_USER)
+    max_candidates = context.get("max_candidates_per_user", MAX_CANDIDATES_PER_USER)
+    final_scores = {k: v for k, v in final_scores.items() if v > 0}
     if len(final_scores) > max_candidates:
-        logger.debug(f"{log_prefix} Selecting top {max_candidates} candidates from {len(final_scores)}.")
         ranked_items = sorted(final_scores.items(), key=lambda item: item[1], reverse=True)
         top_n_scores = dict(ranked_items[:max_candidates])
-        logger.info(f"{log_prefix} Calculated final scores for {len(top_n_scores)} items (Top N).")
+        logger.info(
+            f"{log_prefix} Calculated final scores for {len(top_n_scores)} items (Top N)."
+        )
         return top_n_scores
     else:
-        logger.info(f"{log_prefix} Calculated final scores for {len(final_scores)} items.")
+        logger.info(
+            f"{log_prefix} Calculated final scores for {len(final_scores)} items."
+        )
         return dict(final_scores)
 
 
@@ -79,23 +106,22 @@ def generate_candidate_for_user(
     local_candidate_set = set(local_candidates)
     other_candidate_set = set(other_candidates)
 
-    # --- 초기 점수 계산 함수 호출 ---
-    initial_scores = calculate_initial_scores(
+    # --- 최종 점수 계산 ---
+    final_scores = calculate_final_scores(
         user,
         context,
         global_candidate_set,
         local_candidate_set,
-        other_candidate_set
+        other_candidate_set,
     )
 
-    if not initial_scores:
+    if not final_scores:
         logger.warning(f"{log_prefix} No candidates with scores generated.")
         return {}
 
     # --- 결과 문서 생성 (user_candidate 스키마에 맞게) ---
-    # curation_list를 [{curation_id: str, score: float}] 형태로 변환
     curation_list = []
-    for curation_id, score in initial_scores.items():
+    for curation_id, score in final_scores.items():
         curation_list.append({
             "curation_id": str(curation_id),
             "score": float(score)
