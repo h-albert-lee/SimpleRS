@@ -61,7 +61,8 @@ SimpleRS/
     ├── README.md                   # 이 파일
     ├── development_guide.md        # 개발자 가이드
     ├── rule_development.md         # 룰 개발 가이드
-    └── operations_guide.md         # 운영 가이드
+    ├── operations_guide.md         # 운영 가이드
+    └── ranking_guide.md            # 랭킹 시스템 가이드
 ```
 
 ### 데이터 플로우
@@ -150,3 +151,4 @@ grep "response time" /path/to/batch.log
 - [Rule Development Guide](rule_development.md): 새로운 룰 개발 방법
 - [Development Guide](development_guide.md): 코드 개발 및 테스트
 - [Operations Guide](operations_guide.md): 운영 및 모니터링
+- [Ranking System Guide](ranking_guide.md): API 랭킹 구조 및 룰 설명

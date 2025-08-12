@@ -291,35 +291,57 @@ async def fetch_user_context_data(cust_no: int) -> Dict[str, Any]:
 async def fetch_initial_candidates_with_scores(cust_no: int, db) -> List[Tuple[str, float]]:
     """초기 후보군과 점수 로드 (user_candidate 사용)"""
     log_prefix = f"[cust_no={cust_no}]"
-    logger.debug(f"{log_prefix} Fetching initial candidates with scores from user_candidate...")
+    logger.debug(
+        f"{log_prefix} Fetching initial candidates with scores from user_candidate..."
+    )
     start_time = time.perf_counter()
-    candidates_with_scores = []
+    candidates_with_scores: List[Tuple[str, float]] = []
     try:
         doc = await db.user_candidate.find_one(
-            {"cust_no": cust_no},
-            {"curation_list": 1, "_id": 0}
+            {"cust_no": cust_no}, {"curation_list": 1, "_id": 0}
         )
         if doc and isinstance(doc.get("curation_list"), dict):
-            # 딕셔너리를 (ID, 점수) 튜플 리스트로 변환
-            # 점수가 숫자가 아닌 경우 float 변환 시도 또는 기본값(0.0) 사용
             for item_id, score in doc["curation_list"].items():
                 try:
-                    # MongoDB _id가 ObjectId라면 item_id는 이미 문자열일 것임
-                    # 만약 user_candidate의 key가 ObjectId라면 변환 필요
-                    float_score = float(score)
-                    candidates_with_scores.append((item_id, float_score))
+                    candidates_with_scores.append((item_id, float(score)))
                 except (ValueError, TypeError):
-                     logger.warning(f"{log_prefix} Invalid score format for item {item_id}: {score}. Using 0.0.")
-                     candidates_with_scores.append((item_id, 0.0))
-            # 초기 점수 기준 정렬 (선택 사항)
-            # candidates_with_scores.sort(key=lambda x: x[1], reverse=True)
+                    logger.warning(
+                        f"{log_prefix} Invalid score format for item {item_id}: {score}. Using 0.0."
+                    )
+                    candidates_with_scores.append((item_id, 0.0))
         else:
-            logger.warning(f"{log_prefix} No initial candidates found in user_candidate or format invalid.")
+            logger.warning(
+                f"{log_prefix} No initial candidates found in user_candidate or format invalid."
+            )
     except Exception as e:
-         logger.error(f"{log_prefix} Error fetching initial candidates: {e}", exc_info=True)
+        logger.error(f"{log_prefix} Error fetching initial candidates: {e}", exc_info=True)
+
+    if not candidates_with_scores:
+        for coll in ["curation_hist", "curation"]:
+            try:
+                cursor = (
+                    db[coll]
+                    .find({}, {"_id": 1})
+                    .sort("created_at", -1)
+                    .limit(100)
+                )
+                docs = await cursor.to_list(length=100)
+                if docs:
+                    candidates_with_scores = [(str(doc["_id"]), 0.0) for doc in docs]
+                    logger.warning(
+                        f"{log_prefix} Falling back to {coll} for {len(candidates_with_scores)} candidates."
+                    )
+                    break
+            except Exception as fallback_err:
+                logger.error(
+                    f"{log_prefix} Fallback to {coll} failed: {fallback_err}",
+                    exc_info=True,
+                )
 
     duration_ms = (time.perf_counter() - start_time) * 1000
-    logger.debug(f"{log_prefix} Initial candidates fetch took {duration_ms:.2f}ms. Count: {len(candidates_with_scores)}")
+    logger.debug(
+        f"{log_prefix} Initial candidates fetch took {duration_ms:.2f}ms. Count: {len(candidates_with_scores)}"
+    )
     return candidates_with_scores
 
 # --- 메인 추천 서비스 함수 ---
@@ -459,5 +481,5 @@ async def get_anonymous_recommendations() -> List[str]:
     overall_duration_ms = (time.perf_counter() - start_time) * 1000
     logger.info(f"{log_prefix} Finished processing anonymous recommendations in {overall_duration_ms:.2f}ms. Returning {len(recommendation_ids)} items.")
 
-    RECOMMENDATION_COUNT = 20 # 최종 반환 개수 제한
+    RECOMMENDATION_COUNT = 20  # 최종 반환 개수 제한
     return recommendation_ids[:RECOMMENDATION_COUNT]
