@@ -2,10 +2,12 @@
 import logging
 from typing import Dict, List, Any, Set, Tuple
 from collections import defaultdict
-import pandas as pd # Timestamp 사용
+import pandas as pd  # Timestamp 사용
 
 # 로컬 후보 생성 함수
 from batch.pipeline.local_candidate import compute_local_candidates
+from batch.utils.config_loader import SOURCE_WEIGHTS, MAX_CANDIDATES_PER_USER
+from batch.utils.enums import CandidateSource
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,7 @@ def calculate_initial_scores(
     other_candidate_ids: Set[str]
 ) -> Dict[str, float]:
     """
-    3개의 pool(global, local, other)에 동일한 weight를 주어 점수를 계산합니다.
+    3개의 pool(global, local, other)에 대해 설정된 weight를 사용해 점수를 계산합니다.
     """
     user_id = user.get('cust_no', 'UNKNOWN')
     log_prefix = f"[User: {user_id}] [Scoring]"
@@ -29,25 +31,22 @@ def calculate_initial_scores(
         return {}
 
     final_scores = defaultdict(float)
-    
-    # 3개 pool에 동일한 weight (1.0) 부여
-    pool_weight = 1.0
 
     # 각 pool별로 점수 부여
     for item_id in all_candidate_ids:
         score = 0.0
-        if item_id in global_candidate_ids: 
-            score += pool_weight
-        if item_id in local_candidate_ids: 
-            score += pool_weight
-        if item_id in other_candidate_ids: 
-            score += pool_weight
+        if item_id in global_candidate_ids:
+            score += SOURCE_WEIGHTS.get(CandidateSource.GLOBAL.value, 1.0)
+        if item_id in local_candidate_ids:
+            score += SOURCE_WEIGHTS.get(CandidateSource.LOCAL.value, 1.0)
+        if item_id in other_candidate_ids:
+            score += SOURCE_WEIGHTS.get(CandidateSource.OTHER.value, 1.0)
         
         if score > 0:
             final_scores[item_id] = score
 
     # 점수 내림차순으로 정렬하여 상위 N개 선택
-    max_candidates = context.get('max_candidates_per_user', 100)
+    max_candidates = context.get('max_candidates_per_user', MAX_CANDIDATES_PER_USER)
     if len(final_scores) > max_candidates:
         logger.debug(f"{log_prefix} Selecting top {max_candidates} candidates from {len(final_scores)}.")
         ranked_items = sorted(final_scores.items(), key=lambda item: item[1], reverse=True)
