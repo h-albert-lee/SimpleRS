@@ -17,7 +17,7 @@ async def get_bmt_recommendations(cust_no: int) -> List[str]:
     1. 주어진 cust_no에 대해 MongoDB의 'user_candidate' 컬렉션에서 데이터를 조회합니다. (curation_list 필드만)
     2. 주어진 cust_no에 대해 MongoDB의 'user' 컬렉션에서 데이터를 조회합니다. (_id 필드만, 부하 발생 목적)
     3. 주어진 cust_no에 대해 OpenSearch의 당일 'curation-logs-YYYYMMDD' 인덱스에서 로그를 조회합니다. (size: 0, 부하 발생 목적)
-    4. 'user_candidate'에서 가져온 'curation_list'의 키(콘텐츠 ID)들을 무작위로 섞습니다.
+    4. 'user_candidate'에서 가져온 'curation_list' 항목들의 curation_id를 무작위로 섞습니다.
     5. 셔플된 콘텐츠 ID 리스트를 반환합니다.
 
     모든 DB 조회는 부하 테스트 시나리오의 일부로 필수적으로 수행됩니다.
@@ -57,9 +57,8 @@ async def get_bmt_recommendations(cust_no: int) -> List[str]:
         logger.debug(f"{log_prefix} Fetching user info...")
         doc = None
         try:
-            # CUST_NO 필드명 확인 필요 (스키마 문서에는 대문자였음)
             doc = await db.user.find_one(
-                {"CUST_NO": cust_no},
+                {"cust_no": cust_no},
                 {"_id": 1} # projection 사용
             )
             duration_ms = (time.perf_counter() - start_time) * 1000
@@ -134,25 +133,29 @@ async def get_bmt_recommendations(cust_no: int) -> List[str]:
     # --- 결과 처리 및 셔플 ---
     shuffle_start_time = time.perf_counter()
     if user_candidate_doc and "curation_list" in user_candidate_doc:
-        curation_list_dict: Dict[str, float] = user_candidate_doc.get("curation_list", {})
-        if isinstance(curation_list_dict, dict): # 타입 체크
-            candidate_ids = list(curation_list_dict.keys())
-            if candidate_ids: # ID가 있을 때만 셔플
+        curation_list = user_candidate_doc.get("curation_list", [])
+        if isinstance(curation_list, list):
+            candidate_ids = [
+                str(item.get("curation_id"))
+                for item in curation_list
+                if isinstance(item, dict) and item.get("curation_id")
+            ]
+            if candidate_ids:
                 logger.debug(f"{log_prefix} Shuffling {len(candidate_ids)} candidate IDs...")
                 random.shuffle(candidate_ids)
                 shuffle_duration_ms = (time.perf_counter() - shuffle_start_time) * 1000
                 logger.debug(f"{log_prefix} Finished shuffling in {shuffle_duration_ms:.4f}ms")
             else:
                 logger.debug(f"{log_prefix} No candidate IDs to shuffle.")
-                shuffle_duration_ms = (time.perf_counter() - shuffle_start_time) * 1000 # 시간 측정
+                shuffle_duration_ms = (time.perf_counter() - shuffle_start_time) * 1000
         else:
-            logger.warning(f"{log_prefix} 'curation_list' is not a dictionary. Type: {type(curation_list_dict)}")
-            candidate_ids = [] # 형식 오류 시 빈 리스트
-            shuffle_duration_ms = (time.perf_counter() - shuffle_start_time) * 1000 # 시간 측정
+            logger.warning(f"{log_prefix} 'curation_list' is not a list. Type: {type(curation_list)}")
+            candidate_ids = []
+            shuffle_duration_ms = (time.perf_counter() - shuffle_start_time) * 1000
     else:
         logger.warning(f"{log_prefix} User candidate data not found or 'curation_list' missing.")
-        candidate_ids = [] # 데이터 없을 시 빈 리스트
-        shuffle_duration_ms = (time.perf_counter() - shuffle_start_time) * 1000 # 시간 측정
+        candidate_ids = []
+        shuffle_duration_ms = (time.perf_counter() - shuffle_start_time) * 1000
 
     overall_duration_ms = (time.perf_counter() - overall_start_time) * 1000 # 전체 함수 소요 시간
     logger.info(f"{log_prefix} Finished processing BMT recommendations in {overall_duration_ms:.2f}ms, returning {len(candidate_ids)} ids.")

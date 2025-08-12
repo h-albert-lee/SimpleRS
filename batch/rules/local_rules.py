@@ -147,13 +147,16 @@ class LocalOwnedStockContentRule(BaseLocalRule):
                 # 여러 필드로 매칭 시도
                 stk_name = content.get("stk_name")
                 label = content.get("label")
-                
+
+                if stk_name == '기타' or label == '기타':
+                    continue
+
                 matched = False
-                if stk_name in owned_stock_names:
+                if label in owned_stock_codes:
                     matched = True
-                elif label in owned_stock_codes or label in owned_stock_names:
+                elif stk_name in owned_stock_names or label in owned_stock_names:
                     matched = True
-                    
+
                 if matched:
                     candidates.append(str(content_id))
                     
