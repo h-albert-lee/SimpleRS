@@ -1,20 +1,17 @@
-# api/main.py
 import asyncio
+import logging
 from fastapi import FastAPI
 from api.routers import recommendations
-# api/db_clients 에서 모든 연결 함수 임포트
 from api.db_clients import (
     connect_to_mongo, close_mongo_connection,
     connect_to_opensearch, close_opensearch_connection,
     connect_to_oracle, close_oracle_connection, # Oracle 함수 임포트
     get_mongo_db, get_os_client, get_oracle_pool # DB 객체/풀 가져오는 함수 임포트 (상태 확인용)
 )
-import logging # 로깅 임포트
+from api.logger_manager import init_logging, LOGGING_CONFIG
 
-# 기본 로깅 설정 (main 에서 설정하거나 별도 모듈 사용)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+init_logging()
 logger = logging.getLogger(__name__)
-
 app = FastAPI(
     title="Recommendation System API", # BMT 문구 제거 또는 수정
     version="1.1.0", # 버전 업데이트
@@ -123,3 +120,8 @@ async def root():
         "message": "Recommendation System API is running.",
         "database_connections": db_status
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, log_config=LOGGING_CONFIG)
