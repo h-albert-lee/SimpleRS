@@ -1,15 +1,15 @@
 # simplers/configs/config.yaml
 mongodb:
-  uri: "mongodb://10.196.18.3:27017" # 실제 MongoDB URI
-  db_name: "your_database_name"    # 실제 DB 이름
+  uri: "mongodb://localhost:27017" # 테스트용 MongoDB URI
+  db_name: "test_database"    # 테스트용 DB 이름
   # options:
   #   maxPoolSize: 200
 
 opensearch:
-  hosts: ["http://10.196.18.3:9200"] # 실제 OpenSearch 호스트
+  hosts: ["http://localhost:9200"] # 테스트용 OpenSearch 호스트
   http_auth:
     user: 'admin'
-    password: 'Test0365' # 실제 비밀번호
+    password: 'admin' # 테스트용 비밀번호
 
 api_security:
   api_key: "YOUR_SECRET_API_KEY" # 실제 사용할 보안 API 키

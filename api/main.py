@@ -34,11 +34,12 @@ async def startup_event():
         )
         logger.info("All database connections established.")
     except Exception as e:
-        # DB 연결 중 하나라도 실패하면 로깅하고 에러 발생시켜 앱 시작 중단
-        logger.critical(f"Database connection failed during startup: {e}", exc_info=True)
+        # DB 연결 중 하나라도 실패하면 로깅하지만 앱 시작은 계속 진행 (테스트 목적)
+        logger.warning(f"Database connection failed during startup: {e}", exc_info=True)
+        logger.warning("Continuing startup without database connections for testing purposes.")
         # 실제 운영 환경에서는 여기서 애플리케이션을 안전하게 종료하는 로직 필요
         # 예: import sys; sys.exit(1)
-        raise RuntimeError("Application startup failed due to DB connection error.") from e
+        # raise RuntimeError("Application startup failed due to DB connection error.") from e
 
     # --- 배치 프로세서 관련 로직은 현재 주석 처리됨 ---
     # logger.info("Starting background batch processor...")
